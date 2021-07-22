@@ -26,6 +26,7 @@ local num_gpus = 1;
         "transformer_model_name": transformer_model,
 	"max_document_length": 15360,
 	"for_training": true,
+	"insert_extra_sep_for_null": true,
 	"include_global_attention_on_para_indices": true
     },
     "validation_dataset_reader": {
@@ -33,6 +34,7 @@ local num_gpus = 1;
         "transformer_model_name": transformer_model,
 	"max_document_length": 15360,
 	"for_training": false,
+	"insert_extra_sep_for_null": true,
 	"include_global_attention_on_para_indices": true
     },
     "train_data_path": train_data_path,

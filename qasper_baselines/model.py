@@ -167,6 +167,9 @@ class QasperBaseline(Model):
                 negative_example_scores = util.batched_index_select(evidence_logits, negative_example_indices).squeeze(0)
                 max_negative_score = torch.max(negative_example_scores).unsqueeze(0)
 
+                null_index = paragraph_indices[:,0]
+                null_score = evidence_logits[:,null_index, :].reshape(max_negative_score.size())
+
                 if self.training:
                     min_positive_index = positive_example_indices[:, torch.argmin(positive_example_scores)]
                     evidence_probs = torch.softmax(evidence_logits, dim=1)
@@ -179,8 +182,15 @@ class QasperBaseline(Model):
                         self._train_evidence_logit_thresh(min_positive_prob+(max_negative_prob-min_positive_prob)/2)
 
                 loss_fn = torch.nn.MarginRankingLoss(margin=0.5)
-                evidence_loss = loss_fn(min_positive_score, max_negative_score,
+                # evidence_loss = loss_fn(min_positive_score, max_negative_score,
+                #                         torch.ones(min_positive_score.size(), device=max_negative_score.device))
+                # self._evidence_loss(float(evidence_loss.detach().cpu()))
+
+                pos_loss = loss_fn(min_positive_score, null_score,
                                         torch.ones(min_positive_score.size(), device=max_negative_score.device))
+                neg_loss = loss_fn(null_score, max_negative_score,
+                                        torch.ones(min_positive_score.size(), device=max_negative_score.device))
+                evidence_loss = pos_loss + neg_loss
                 self._evidence_loss(float(evidence_loss.detach().cpu()))
             else:
                 loss_fn = torch.nn.CrossEntropyLoss(weight=weights)
@@ -194,11 +204,12 @@ class QasperBaseline(Model):
                     loss = evidence_loss
                 else:
                     loss = loss + evidence_loss
-            if not self.training:
+            if True: #not self.training:
                 if self._use_margin_loss_for_evidence:
                     # predicted_evidence_scores = evidence_logits.tolist()[1:]
                     predicted_evidence_scores = evidence_probs[:, 1:, ].reshape((1, evidence.size(1)-1))
-                    threshold = self._train_evidence_logit_thresh.get_metric(reset=False)
+                    # threshold = self._train_evidence_logit_thresh.get_metric(reset=False)
+                    threshold = evidence_probs[:, 0, ].reshape((1, 1))
                     predicted_evidence_indices = (predicted_evidence_scores > threshold).int().tolist()
                 else:
                     predicted_evidence_indices = evidence_logits.argmax(dim=-1).tolist()
