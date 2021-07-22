@@ -50,6 +50,7 @@ local num_gpus = 1;
 	"use_only_evidence_loss": true,
 	"use_evidence_scaffold": true,
 	"use_margin_loss_for_evidence": true,
+	"use_single_margin_loss": false,
 	"attention_dropout": 0.5,
 	"per_reference_level_metrics": false,
 	#"resume_model_dir": resume_model_dir,

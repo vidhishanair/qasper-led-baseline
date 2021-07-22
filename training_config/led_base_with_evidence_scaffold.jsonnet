@@ -8,11 +8,11 @@ local num_gradient_accumulation_steps = 2;
 #local train_data_path = "TODO";
 #local dev_data_path = "TODO";
 
-# local train_data_path = "/data/qasper-train-v0.1.json";
-# local dev_data_path = "/data/qasper-dev-v0.1.json";
+local train_data_path = "/data/qasper-train-v0.1.json";
+local dev_data_path = "/data/qasper-dev-v0.1.json";
 
-local train_data_path = "/net/nfs2.corp/allennlp/vidhishab/data/qasper-train-dev-v0.1/qasper-train-v0.1.json";
-local dev_data_path = "/net/nfs2.corp/allennlp/vidhishab/data/qasper-train-dev-v0.1/qasper-dev-v0.1.json";
+# local train_data_path = "/net/nfs2.corp/allennlp/vidhishab/data/qasper-train-dev-v0.1/qasper-train-v0.1.json";
+# local dev_data_path = "/net/nfs2.corp/allennlp/vidhishab/data/qasper-train-dev-v0.1/qasper-dev-v0.1.json";
 
 local training_data_size = 2672;
 local num_gpus = 1;
@@ -52,6 +52,7 @@ local num_gpus = 1;
 	"use_only_evidence_loss": true,
     "use_evidence_scaffold": true,
     "use_margin_loss_for_evidence": true,
+    "use_single_margin_loss": false,
 	"attention_dropout": 0.5,
 	"per_reference_level_metrics": false,
 	#"resume_model_dir": resume_model_dir,

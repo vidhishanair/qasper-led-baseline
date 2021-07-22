@@ -33,6 +33,7 @@ class QasperBaseline(Model):
         use_only_evidence_loss: bool = False,
         use_evidence_scaffold: bool = True,
         use_margin_loss_for_evidence: bool = False,
+        use_single_margin_loss: bool = False,
         per_reference_level_metrics: bool = False,
         resume_model_dir: str = None,
         resume_model_file: str = None,
@@ -72,6 +73,7 @@ class QasperBaseline(Model):
         self._use_only_evidence_loss = use_only_evidence_loss
         self._use_evidence_scaffold = use_evidence_scaffold
         self._use_margin_loss_for_evidence = use_margin_loss_for_evidence
+        self._use_single_margin_loss = use_single_margin_loss
         self._per_reference_level_metrics = per_reference_level_metrics
         self._answer_f1 = Average()
         self._answer_f1_by_type = {answer_type: Average() for answer_type in AnswerType}
@@ -159,38 +161,38 @@ class QasperBaseline(Model):
                 dtype=evidence_logits.dtype,
             )
             if self._use_margin_loss_for_evidence:
+                evidence_probs = torch.softmax(evidence_logits, dim=1)
+
                 positive_example_indices = (evidence == 1).nonzero()[:, 1].unsqueeze(0)
-                positive_example_scores = util.batched_index_select(evidence_logits, positive_example_indices).squeeze(0)
+                positive_example_scores = util.batched_index_select(evidence_probs, positive_example_indices).squeeze(0)
                 min_positive_score = torch.min(positive_example_scores).unsqueeze(0)
 
                 negative_example_indices = (evidence == 0).nonzero()[:, 1].unsqueeze(0)
-                negative_example_scores = util.batched_index_select(evidence_logits, negative_example_indices).squeeze(0)
+                negative_example_scores = util.batched_index_select(evidence_probs, negative_example_indices).squeeze(0)
                 max_negative_score = torch.max(negative_example_scores).unsqueeze(0)
 
-                null_index = paragraph_indices[:,0]
-                null_score = evidence_logits[:,0, :].reshape(max_negative_score.size())
-                evidence_probs = torch.softmax(evidence_logits, dim=1)
+                null_score = evidence_probs[:, 0, :].reshape(max_negative_score.size())
 
-                # if self.training:
-                #     min_positive_index = positive_example_indices[:, torch.argmin(positive_example_scores)]
-                #     min_positive_prob = evidence_probs[:, min_positive_index, :]
-                #     max_negative_index = negative_example_indices[:, torch.argmax(negative_example_scores)]
-                #     max_negative_prob = evidence_probs[:, max_negative_index, :]
-                #     if max_negative_prob < min_positive_prob:
-                #         self._train_evidence_logit_thresh(max_negative_prob+(min_positive_prob-max_negative_prob)/2)
-                #     else:
-                #         self._train_evidence_logit_thresh(min_positive_prob+(max_negative_prob-min_positive_prob)/2)
+                if self.training:
+                    min_positive_index = positive_example_indices[:, torch.argmin(positive_example_scores)]
+                    min_positive_prob = evidence_probs[:, min_positive_index, :]
+                    max_negative_index = negative_example_indices[:, torch.argmax(negative_example_scores)]
+                    max_negative_prob = evidence_probs[:, max_negative_index, :]
+                    if max_negative_prob < min_positive_prob:
+                        self._train_evidence_logit_thresh(max_negative_prob+(min_positive_prob-max_negative_prob)/2)
+                    else:
+                        self._train_evidence_logit_thresh(min_positive_prob+(max_negative_prob-min_positive_prob)/2)
 
-                loss_fn = torch.nn.MarginRankingLoss(margin=0.5)
-                #evidence_loss = loss_fn(min_positive_score, max_negative_score,
-                #                        torch.ones(min_positive_score.size(), device=max_negative_score.device))
-                #self._evidence_loss(float(evidence_loss.detach().cpu()))
-                
-                pos_loss = loss_fn(min_positive_score, null_score,
-                                        torch.ones(min_positive_score.size(), device=max_negative_score.device))
-                neg_loss = loss_fn(null_score, max_negative_score,
-                                        torch.ones(min_positive_score.size(), device=max_negative_score.device))
-                evidence_loss = pos_loss + neg_loss
+                loss_fn = torch.nn.MarginRankingLoss(margin=1.0)
+                if self._use_single_margin_loss:
+                    evidence_loss = loss_fn(min_positive_score, max_negative_score,
+                                           torch.ones(min_positive_score.size(), device=max_negative_score.device))
+                else:
+                    pos_loss = loss_fn(min_positive_score, null_score,
+                                            torch.ones(min_positive_score.size(), device=max_negative_score.device))
+                    neg_loss = loss_fn(null_score, max_negative_score,
+                                            torch.ones(min_positive_score.size(), device=max_negative_score.device))
+                    evidence_loss = pos_loss + neg_loss
                 self._evidence_loss(float(evidence_loss.detach().cpu()))
             else:
                 loss_fn = torch.nn.CrossEntropyLoss(weight=weights)
@@ -206,7 +208,6 @@ class QasperBaseline(Model):
                     loss = loss + evidence_loss
             if not self.training:
                 if self._use_margin_loss_for_evidence:
-                    # predicted_evidence_scores = evidence_logits.tolist()[1:]
                     predicted_evidence_scores = evidence_probs[:, 1:, ].reshape((1, evidence.size(1)-1))
                     # threshold = self._train_evidence_logit_thresh.get_metric(reset=False)
                     threshold = evidence_probs[:, 0, ].reshape((1, 1))
