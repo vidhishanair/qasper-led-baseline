@@ -168,24 +168,24 @@ class QasperBaseline(Model):
                 max_negative_score = torch.max(negative_example_scores).unsqueeze(0)
 
                 null_index = paragraph_indices[:,0]
-                null_score = evidence_logits[:,null_index, :].reshape(max_negative_score.size())
+                null_score = evidence_logits[:,0, :].reshape(max_negative_score.size())
+                evidence_probs = torch.softmax(evidence_logits, dim=1)
 
-                if self.training:
-                    min_positive_index = positive_example_indices[:, torch.argmin(positive_example_scores)]
-                    evidence_probs = torch.softmax(evidence_logits, dim=1)
-                    min_positive_prob = evidence_probs[:, min_positive_index, :]
-                    max_negative_index = negative_example_indices[:, torch.argmin(negative_example_scores)]
-                    max_negative_prob = evidence_probs[:, max_negative_index, :]
-                    if max_negative_prob < min_positive_prob:
-                        self._train_evidence_logit_thresh(max_negative_prob+(min_positive_prob-max_negative_prob)/2)
-                    else:
-                        self._train_evidence_logit_thresh(min_positive_prob+(max_negative_prob-min_positive_prob)/2)
+                # if self.training:
+                #     min_positive_index = positive_example_indices[:, torch.argmin(positive_example_scores)]
+                #     min_positive_prob = evidence_probs[:, min_positive_index, :]
+                #     max_negative_index = negative_example_indices[:, torch.argmax(negative_example_scores)]
+                #     max_negative_prob = evidence_probs[:, max_negative_index, :]
+                #     if max_negative_prob < min_positive_prob:
+                #         self._train_evidence_logit_thresh(max_negative_prob+(min_positive_prob-max_negative_prob)/2)
+                #     else:
+                #         self._train_evidence_logit_thresh(min_positive_prob+(max_negative_prob-min_positive_prob)/2)
 
                 loss_fn = torch.nn.MarginRankingLoss(margin=0.5)
-                # evidence_loss = loss_fn(min_positive_score, max_negative_score,
-                #                         torch.ones(min_positive_score.size(), device=max_negative_score.device))
-                # self._evidence_loss(float(evidence_loss.detach().cpu()))
-
+                #evidence_loss = loss_fn(min_positive_score, max_negative_score,
+                #                        torch.ones(min_positive_score.size(), device=max_negative_score.device))
+                #self._evidence_loss(float(evidence_loss.detach().cpu()))
+                
                 pos_loss = loss_fn(min_positive_score, null_score,
                                         torch.ones(min_positive_score.size(), device=max_negative_score.device))
                 neg_loss = loss_fn(null_score, max_negative_score,
@@ -204,7 +204,7 @@ class QasperBaseline(Model):
                     loss = evidence_loss
                 else:
                     loss = loss + evidence_loss
-            if True: #not self.training:
+            if not self.training:
                 if self._use_margin_loss_for_evidence:
                     # predicted_evidence_scores = evidence_logits.tolist()[1:]
                     predicted_evidence_scores = evidence_probs[:, 1:, ].reshape((1, evidence.size(1)-1))
