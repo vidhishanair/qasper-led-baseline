@@ -185,14 +185,35 @@ class QasperBaseline(Model):
 
                 loss_fn = torch.nn.MarginRankingLoss(margin=1.0)
                 if self._use_single_margin_loss:
-                    evidence_loss = loss_fn(min_positive_score, max_negative_score,
-                                           torch.ones(min_positive_score.size(), device=max_negative_score.device))
+                    all_pos, all_neg = torch.meshgrid(positive_example_scores.squeeze(1), negative_example_scores.squeeze(1))
+                    pos_scores = all_pos.reshape(all_pos.size(0)*all_pos.size(1))
+                    neg_scores = all_neg.reshape(all_neg.size(0)*all_neg.size(1))
+                    evidence_loss = loss_fn(pos_scores, neg_scores,
+                                           torch.ones(pos_scores.size(), device=max_negative_score.device))
+                    # evidence_loss = loss_fn(min_positive_score, max_negative_score,
+                    #                         torch.ones(min_positive_score.size(), device=max_negative_score.device))
                 else:
-                    pos_loss = loss_fn(min_positive_score, null_score,
-                                            torch.ones(min_positive_score.size(), device=max_negative_score.device))
-                    neg_loss = loss_fn(null_score, max_negative_score,
-                                            torch.ones(min_positive_score.size(), device=max_negative_score.device))
-                    evidence_loss = pos_loss + neg_loss
+                    all_neg, all_neg_null = torch.meshgrid(negative_example_scores.squeeze(1), positive_example_scores.squeeze(1)[0])
+
+                    neg_scores = all_neg.reshape(all_neg.size(0)*all_neg.size(1))
+                    neg_null_scores = all_neg_null.reshape(all_neg_null.size(0)*all_neg_null.size(1))
+                    neg_loss = loss_fn(neg_null_scores, neg_scores,
+                                       torch.ones(neg_scores.size(), device=max_negative_score.device))
+                    evidence_loss = neg_loss
+
+                    if positive_example_scores.size(0) > 1:
+                        all_pos, all_pos_null = torch.meshgrid(positive_example_scores.squeeze(1)[1:], positive_example_scores.squeeze(1)[0])
+                        pos_scores = all_pos.reshape(all_pos.size(0)*all_pos.size(1))
+                        pos_null_scores = all_pos_null.reshape(all_pos_null.size(0)*all_pos_null.size(1))
+                        pos_loss = loss_fn(pos_scores, pos_null_scores,
+                                           torch.ones(pos_scores.size(), device=max_negative_score.device))
+                        evidence_loss += pos_loss
+
+                    # pos_loss = loss_fn(min_positive_score, null_score,
+                    #                         torch.ones(min_positive_score.size(), device=max_negative_score.device))
+                    # neg_loss = loss_fn(null_score, max_negative_score,
+                    #                         torch.ones(min_positive_score.size(), device=max_negative_score.device))
+                    # evidence_loss = pos_loss + neg_loss
                 self._evidence_loss(float(evidence_loss.detach().cpu()))
             else:
                 loss_fn = torch.nn.CrossEntropyLoss(weight=weights)
@@ -209,8 +230,10 @@ class QasperBaseline(Model):
             if not self.training:
                 if self._use_margin_loss_for_evidence:
                     predicted_evidence_scores = evidence_probs[:, 1:, ].reshape((1, evidence.size(1)-1))
-                    # threshold = self._train_evidence_logit_thresh.get_metric(reset=False)
-                    threshold = evidence_probs[:, 0, ].reshape((1, 1))
+                    if self._use_single_margin_loss:
+                        threshold = self._train_evidence_logit_thresh.get_metric(reset=False)
+                    else:
+                        threshold = evidence_probs[:, 0, ].reshape((1, 1))
                     predicted_evidence_indices = (predicted_evidence_scores > threshold).int().tolist()
                 else:
                     predicted_evidence_indices = evidence_logits.argmax(dim=-1).tolist()
