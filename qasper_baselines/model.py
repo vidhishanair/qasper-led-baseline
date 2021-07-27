@@ -78,6 +78,7 @@ class QasperBaseline(Model):
         self._answer_f1 = Average()
         self._answer_f1_by_type = {answer_type: Average() for answer_type in AnswerType}
         self._evidence_f1 = Average()
+        self._train_evidence_f1 = Average()
         self._evidence_loss = Average()
         self._train_evidence_logit_thresh = Average()
 
@@ -122,7 +123,8 @@ class QasperBaseline(Model):
                     input_ids=input_ids,
                     attention_mask=attention_mask,
                     global_attention_mask=global_attention_mask,
-                    max_length=100
+                    max_length=100,
+                    use_cache=False,
                 )
                 predicted_answers = [
                     self.tokenizer.decode(generated_token_ids[i].tolist(), skip_special_tokens=True)
@@ -227,23 +229,26 @@ class QasperBaseline(Model):
                     loss = evidence_loss
                 else:
                     loss = loss + evidence_loss
-            if not self.training:
-                if self._use_margin_loss_for_evidence:
-                    predicted_evidence_scores = evidence_probs[:, 1:, ].reshape((1, evidence.size(1)-1))
-                    if self._use_single_margin_loss:
-                        threshold = self._train_evidence_logit_thresh.get_metric(reset=False)
-                    else:
-                        threshold = evidence_probs[:, 0, ].reshape((1, 1))
-                    predicted_evidence_indices = (predicted_evidence_scores > threshold).int().tolist()
+            # if True: #not self.training:
+            if self._use_margin_loss_for_evidence:
+                predicted_evidence_scores = evidence_probs[:, 1:, ].reshape((1, evidence.size(1)-1))
+                if self._use_single_margin_loss:
+                    threshold = self._train_evidence_logit_thresh.get_metric(reset=False)
                 else:
-                    predicted_evidence_indices = evidence_logits.argmax(dim=-1).tolist()
-                gold_evidence_indices = [instance_metadata["all_evidence_masks"]
-                                         for instance_metadata in metadata]
-                for evidence_f1 in self._compute_evidence_f1(predicted_evidence_indices,
-                                                             gold_evidence_indices):
-                    if self._per_reference_level_metrics:
-                        for ref_evidence_f1 in evidence_f1:
-                            self._evidence_f1(ref_evidence_f1)
+                    threshold = evidence_probs[:, 0, ].reshape((1, 1))
+                predicted_evidence_indices = (predicted_evidence_scores > threshold).int().tolist()
+            else:
+                predicted_evidence_indices = evidence_logits.argmax(dim=-1).tolist()
+            gold_evidence_indices = [instance_metadata["all_evidence_masks"]
+                                     for instance_metadata in metadata]
+            for evidence_f1 in self._compute_evidence_f1(predicted_evidence_indices,
+                                                         gold_evidence_indices):
+                if self._per_reference_level_metrics:
+                    for ref_evidence_f1 in evidence_f1:
+                        self._evidence_f1(ref_evidence_f1)
+                else:
+                    if self.training:
+                        self._train_evidence_f1(max(evidence_f1))
                     else:
                         self._evidence_f1(max(evidence_f1))
         output_dict["loss"] = loss
@@ -286,6 +291,7 @@ class QasperBaseline(Model):
         boolean_f1_score = self._answer_f1_by_type[AnswerType.BOOLEAN].get_metric(reset)
         none_f1_score = self._answer_f1_by_type[AnswerType.NONE].get_metric(reset)
         evidence_f1 = self._evidence_f1.get_metric(reset)
+        train_evidence_f1 = self._train_evidence_f1.get_metric(reset)
         evidence_loss = self._evidence_loss.get_metric(reset)
         threshold = self._train_evidence_logit_thresh.get_metric(reset=True)
         return {
@@ -295,5 +301,6 @@ class QasperBaseline(Model):
             "bool_f1": boolean_f1_score,
             "none_f1": none_f1_score,
             "evidence_f1": evidence_f1,
+            "train_evidence_f1": train_evidence_f1,
             "evidence_loss": evidence_loss
         }

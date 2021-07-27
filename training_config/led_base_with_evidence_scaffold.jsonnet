@@ -51,7 +51,7 @@ local num_gpus = 1;
 	"gradient_checkpointing": true,
 	"use_only_evidence_loss": true,
     "use_evidence_scaffold": true,
-    "use_margin_loss_for_evidence": true,
+    "use_margin_loss_for_evidence": false,
     "use_single_margin_loss": false,
 	"attention_dropout": 0.5,
 	"per_reference_level_metrics": false,
