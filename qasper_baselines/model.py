@@ -24,6 +24,28 @@ from sklearn.metrics import auc
 
 logger = logging.getLogger(__name__)
 
+
+def add_orthogonal_vectors_to_position_embeddings_(transformer, base_sequence_length=1024):
+    """
+    Modifies the position embeddings in place.
+    """
+    expansion_factor = transformer.led.encoder.embed_positions.num_embeddings // base_sequence_length
+    embed_size = transformer.led.encoder.embed_positions.embedding_dim
+    # create an orthogonal matrix
+    offsets = torch.empty(expansion_factor - 1, embed_size)
+    torch.nn.init.orthogonal_(offsets) 
+    # scale by std of position embeddings
+    offsets /= offsets.std()
+    offsets *= transformer.led.encoder.embed_positions.weight.std()
+
+    # add to existing position embeddings
+    start = base_sequence_length
+    for k in range(expansion_factor - 1):
+        end = start + base_sequence_length
+        transformer.led.encoder.embed_positions.weight.data[start:end, :] += offsets[k].unsqueeze(0)
+
+
+
 @Model.register("qasper_baseline")
 class QasperBaseline(Model):
     def __init__(
@@ -41,6 +63,7 @@ class QasperBaseline(Model):
         per_reference_level_metrics: bool = False,
         resume_model_dir: str = None,
         resume_model_file: str = None,
+        add_position_embedding_offset: bool = False,
         **kwargs
     ):
         super().__init__(vocab, **kwargs)
@@ -57,6 +80,8 @@ class QasperBaseline(Model):
             self.transformer = AutoModelForSeq2SeqLM.from_pretrained(None, config=config, state_dict=renamed_state_dict)
         else:
             self.transformer = AutoModelForSeq2SeqLM.from_pretrained(transformer_model_name, config=config)
+            if add_position_embedding_offset:
+                add_orthogonal_vectors_to_position_embeddings_(self.transformer)
         self.tokenizer = AutoTokenizer.from_pretrained(
             transformer_model_name,
             add_special_tokens=False
