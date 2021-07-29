@@ -4,6 +4,7 @@ import random
 from enum import Enum
 from collections import defaultdict
 from typing import Any, Dict, List, Optional, Iterable, Tuple
+from nltk.tokenize import sent_tokenize
 
 from overrides import overrides
 
@@ -96,6 +97,8 @@ class QasperReader(DatasetReader):
         include_global_attention_mask: bool = True,
         include_global_attention_on_para_indices: bool = True,
         insert_extra_sep_for_null: bool = False,
+        use_margin_loss_for_evidence: bool = False,
+        use_sentence_level_evidence: bool = False,
         context: str = "full_text",
         for_training: bool = False,
         **kwargs,
@@ -113,6 +116,8 @@ class QasperReader(DatasetReader):
         self._include_global_attention_mask = include_global_attention_mask
         self._include_global_attention_on_para_indices = include_global_attention_on_para_indices
         self._insert_extra_sep_for_null = insert_extra_sep_for_null
+        self._use_margin_loss_for_evidence = use_margin_loss_for_evidence
+        self._use_sentence_level_evidence = use_sentence_level_evidence
         self._token_indexers = {
             "tokens": PretrainedTransformerIndexer(transformer_model_name)
         }
@@ -309,10 +314,12 @@ class QasperReader(DatasetReader):
         )
         if self._insert_extra_sep_for_null:
             paragraph_indices_list = [start_of_context]+[x + start_of_context + 1 for x in paragraph_start_indices]
-        else:
+        elif self._use_margin_loss_for_evidence:
             paragraph_indices_list = [0]+[x + start_of_context for x in paragraph_start_indices]
+        else:
+            paragraph_indices_list = [x + start_of_context for x in paragraph_start_indices]
 
-        if evidence_mask is not None:
+        if evidence_mask is not None and self._use_margin_loss_for_evidence:
             evidence_mask = [1]+evidence_mask
             # if sum(evidence_mask) == 0:
             #     evidence_mask = [1]+evidence_mask
@@ -383,7 +390,10 @@ class QasperReader(DatasetReader):
     def _extract_answer_and_evidence(
         self, answer: List[JsonDict]
     ) -> Tuple[str, List[str]]:
-        evidence_spans = [x.replace("\n", " ").strip() for x in answer["evidence"]]
+        if self._use_sentence_level_evidence:
+            evidence_spans = [x.replace("\n", " ").strip() for x in answer["highlighted_evidence"]]
+        else:
+            evidence_spans = [x.replace("\n", " ").strip() for x in answer["evidence"]]
         evidence_spans = [x for x in evidence_spans if x != ""]
         if not evidence_spans:
             self._stats["answers with no evidence"] += 1
@@ -434,6 +444,11 @@ class QasperReader(DatasetReader):
                 paragraphs.append(section_info["section_name"])
             for paragraph in section_info["paragraphs"]:
                 paragraph_text = paragraph.replace("\n", " ").strip()
+                sents = sent_tokenize(paragraph_text)
+                if self._use_sentence_level_evidence:
+                    for sent in sents:
+                        if sent:
+                            paragraphs.append(sent)
                 if paragraph_text:
                     paragraphs.append(paragraph_text)
             if self._context == "question_and_introduction":

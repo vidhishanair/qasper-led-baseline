@@ -1,6 +1,7 @@
 import os
 import logging
-from typing import Any, Dict, List
+import numpy as np
+from typing import Any, Dict, List, Tuple
 from overrides import overrides
 
 from transformers import AutoConfig, AutoModelForSeq2SeqLM, AutoTokenizer
@@ -17,6 +18,9 @@ from allennlp_models.rc.tools import squad
 
 from qasper_baselines.dataset_reader import AnswerType
 # from sci_long_t5.model import LongT5Config, LongT5TokenizerFast, LongT5ForConditionalGeneration
+
+from sklearn.metrics import precision_recall_curve
+from sklearn.metrics import auc
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +82,9 @@ class QasperBaseline(Model):
         self._answer_f1 = Average()
         self._answer_f1_by_type = {answer_type: Average() for answer_type in AnswerType}
         self._evidence_f1 = Average()
-        self._train_evidence_f1 = Average()
+        self._evidence_p = Average()
+        self._evidence_r = Average()
+        self._evidence_auc = Average()
         self._evidence_loss = Average()
         self._train_evidence_logit_thresh = Average()
 
@@ -124,7 +130,7 @@ class QasperBaseline(Model):
                     attention_mask=attention_mask,
                     global_attention_mask=global_attention_mask,
                     max_length=100,
-                    use_cache=False,
+                    # use_cache=False,
                 )
                 predicted_answers = [
                     self.tokenizer.decode(generated_token_ids[i].tolist(), skip_special_tokens=True)
@@ -162,9 +168,8 @@ class QasperBaseline(Model):
                 device=evidence_logits.device,
                 dtype=evidence_logits.dtype,
             )
+            evidence_probs = torch.softmax(evidence_logits, dim=1)
             if self._use_margin_loss_for_evidence:
-                evidence_probs = torch.softmax(evidence_logits, dim=1)
-
                 positive_example_indices = (evidence == 1).nonzero()[:, 1].unsqueeze(0)
                 positive_example_scores = util.batched_index_select(evidence_probs, positive_example_indices).squeeze(0)
                 min_positive_score = torch.min(positive_example_scores).unsqueeze(0)
@@ -229,28 +234,40 @@ class QasperBaseline(Model):
                     loss = evidence_loss
                 else:
                     loss = loss + evidence_loss
-            # if True: #not self.training:
-            if self._use_margin_loss_for_evidence:
-                predicted_evidence_scores = evidence_probs[:, 1:, ].reshape((1, evidence.size(1)-1))
-                if self._use_single_margin_loss:
-                    threshold = self._train_evidence_logit_thresh.get_metric(reset=False)
-                else:
-                    threshold = evidence_probs[:, 0, ].reshape((1, 1))
-                predicted_evidence_indices = (predicted_evidence_scores > threshold).int().tolist()
-            else:
-                predicted_evidence_indices = evidence_logits.argmax(dim=-1).tolist()
-            gold_evidence_indices = [instance_metadata["all_evidence_masks"]
-                                     for instance_metadata in metadata]
-            for evidence_f1 in self._compute_evidence_f1(predicted_evidence_indices,
-                                                         gold_evidence_indices):
-                if self._per_reference_level_metrics:
-                    for ref_evidence_f1 in evidence_f1:
-                        self._evidence_f1(ref_evidence_f1)
-                else:
-                    if self.training:
-                        self._train_evidence_f1(max(evidence_f1))
+            if True: #not self.training:
+                if self._use_margin_loss_for_evidence:
+                    predicted_evidence_scores = evidence_probs[:, 1:, ].reshape((1, evidence.size(1)-1))
+                    if self._use_single_margin_loss:
+                        threshold = self._train_evidence_logit_thresh.get_metric(reset=False)
                     else:
-                        self._evidence_f1(max(evidence_f1))
+                        threshold = evidence_probs[:, 0, ].reshape((1, 1))
+                    predicted_evidence_indices = (predicted_evidence_scores > threshold).int().tolist()
+                else:
+                    predicted_evidence_indices = evidence_logits.argmax(dim=-1).tolist()
+                gold_evidence_indices = [instance_metadata["all_evidence_masks"]
+                                         for instance_metadata in metadata]
+                if not self.training:
+                    for instance_predicted, instance_gold in zip(evidence_probs[:, :, 1].squeeze(-1).tolist() , gold_evidence_indices):
+                        instance_aucs = []
+                        for gold in instance_gold:
+                            gold = gold[:len(instance_predicted)]
+                            precision, recall, _ = precision_recall_curve(gold, instance_predicted)
+                            recall = np.nan_to_num(recall, nan=1.0)
+                            auc_score = auc(recall, precision)
+                            instance_aucs.append(auc_score)
+                        self._evidence_auc(max(instance_aucs))
+                for evidence_f1, evidence_p, evidence_r in self._compute_evidence_f1(predicted_evidence_indices,
+                                                             gold_evidence_indices):
+                    if self._per_reference_level_metrics:
+                        for ref_evidence_f1 in evidence_f1:
+                            self._evidence_f1(ref_evidence_f1)
+                    else:
+                        x = np.array(evidence_f1)
+                        max_f1 = np.max(x)
+                        max_f1_idx = np.argmax(x)
+                        self._evidence_f1(max_f1)
+                        self._evidence_p(evidence_p[max_f1_idx])
+                        self._evidence_r(evidence_r[max_f1_idx])
         output_dict["loss"] = loss
         return output_dict
 
@@ -258,10 +275,13 @@ class QasperBaseline(Model):
     def _compute_evidence_f1(
         predicted_evidence_indices: List[List[int]],
         gold_evidence_indices: List[List[List[int]]]
-    ) -> List[List[float]]:
+    ) -> List[Tuple[List[float], List[float], List[float]]]:
         f1s = []
+        metrics = []
         for instance_predicted, instance_gold in zip(predicted_evidence_indices, gold_evidence_indices):
             instance_f1s = []
+            instance_precisions = []
+            instance_recalls = []
             for gold in instance_gold:
                 # If the document was truncated to fit in the model, the gold will be longer than the 
                 # predicted indices.
@@ -272,16 +292,19 @@ class QasperBaseline(Model):
                 else:
                     precision = true_positives / sum(predicted)
                 recall = true_positives / sum(gold) if sum(gold) != 0 else 1.0
+                instance_precisions.append(precision)
+                instance_recalls.append(recall)
                 if precision + recall == 0:
                     instance_f1s.append(0.0)
                 else:
                     instance_f1s.append(2 * precision * recall / (precision + recall))
             f1s.append(instance_f1s)
+            metrics.append((instance_f1s, instance_precisions, instance_recalls))
             # if self._per_reference_level_metrics:
             #     f1s.extend(instance_f1s)
             # else:
             #     f1s.append(max(instance_f1s))
-        return f1s
+        return metrics
 
     @overrides
     def get_metrics(self, reset: bool = False) -> Dict[str, float]:
@@ -291,7 +314,9 @@ class QasperBaseline(Model):
         boolean_f1_score = self._answer_f1_by_type[AnswerType.BOOLEAN].get_metric(reset)
         none_f1_score = self._answer_f1_by_type[AnswerType.NONE].get_metric(reset)
         evidence_f1 = self._evidence_f1.get_metric(reset)
-        train_evidence_f1 = self._train_evidence_f1.get_metric(reset)
+        evidence_p = self._evidence_p.get_metric(reset)
+        evidence_r = self._evidence_r.get_metric(reset)
+        evidence_auc = self._evidence_auc.get_metric(reset)
         evidence_loss = self._evidence_loss.get_metric(reset)
         threshold = self._train_evidence_logit_thresh.get_metric(reset=True)
         return {
@@ -301,6 +326,8 @@ class QasperBaseline(Model):
             "bool_f1": boolean_f1_score,
             "none_f1": none_f1_score,
             "evidence_f1": evidence_f1,
-            "train_evidence_f1": train_evidence_f1,
+            "evidence_p": evidence_p,
+            "evidence_r": evidence_r,
+            "evidence_auc": evidence_auc,
             "evidence_loss": evidence_loss
         }

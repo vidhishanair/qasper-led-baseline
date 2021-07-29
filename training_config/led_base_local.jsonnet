@@ -16,6 +16,7 @@ local dev_data_path = "/Users/vidhisha/Research/qasper-train-dev-v0.1/qasper-dev
 
 local training_data_size = 2672;
 local num_gpus = 1;
+local use_margin_loss_for_evidence = false;
 
 # local resume_model_dir = "/resume_model";
 # local resume_model_file = "arxiv-epoch=04-step=0-val_rouge1=0.0000-v1.ckpt";
@@ -26,7 +27,9 @@ local num_gpus = 1;
         "transformer_model_name": transformer_model,
 	"max_document_length": 15360,
 	"for_training": true,
-	"insert_extra_sep_for_null": true,
+	"insert_extra_sep_for_null": false,
+	"use_sentence_level_evidence": true,
+	"use_margin_loss_for_evidence": use_margin_loss_for_evidence,
 	"include_global_attention_on_para_indices": true
     },
     "validation_dataset_reader": {
@@ -34,8 +37,10 @@ local num_gpus = 1;
         "transformer_model_name": transformer_model,
 	"max_document_length": 15360,
 	"for_training": false,
-	"insert_extra_sep_for_null": true,
-	"include_global_attention_on_para_indices": true
+	"insert_extra_sep_for_null": false,
+	"use_sentence_level_evidence": true,
+	"use_margin_loss_for_evidence": use_margin_loss_for_evidence,
+    "include_global_attention_on_para_indices": true
     },
     "train_data_path": train_data_path,
     "validation_data_path": dev_data_path,
@@ -49,7 +54,7 @@ local num_gpus = 1;
 	"gradient_checkpointing": true,
 	"use_only_evidence_loss": true,
 	"use_evidence_scaffold": true,
-	"use_margin_loss_for_evidence": true,
+	"use_margin_loss_for_evidence": use_margin_loss_for_evidence,
 	"use_single_margin_loss": false,
 	"attention_dropout": 0.5,
 	"per_reference_level_metrics": false,
