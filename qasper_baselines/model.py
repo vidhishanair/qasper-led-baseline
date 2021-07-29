@@ -42,7 +42,8 @@ def add_orthogonal_vectors_to_position_embeddings_(transformer, base_sequence_le
     start = base_sequence_length
     for k in range(expansion_factor - 1):
         end = start + base_sequence_length
-        transformer.led.encoder.embed_positions.weight.data[start:end, :] += offsets[k].unsqueeze(0)
+        transformer.led.encoder.embed_positions.weight.data[start:end, :] += offsets[k, :].unsqueeze(0)
+        start = end
 
 
 
