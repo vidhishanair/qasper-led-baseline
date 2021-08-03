@@ -94,6 +94,7 @@ class QasperBaseline(Model):
         paragraph_indices: torch.Tensor,
         global_attention_mask: torch.Tensor = None,
         evidence: torch.Tensor = None,
+        last_evidence_mask: torch.Tensor = None,
         answer: TextFieldTensors = None,
         metadata: Dict[str, Any] = None,
     ) -> Dict[str, torch.Tensor]:
@@ -223,8 +224,11 @@ class QasperBaseline(Model):
                     # evidence_loss = pos_loss + neg_loss
                 self._evidence_loss(float(evidence_loss.detach().cpu()))
             else:
+                # loss_fn = torch.nn.CrossEntropyLoss(weight=weights, reduction='none')
                 loss_fn = torch.nn.CrossEntropyLoss(weight=weights)
                 evidence_loss = loss_fn(evidence_logits.view(-1, 2), evidence.view(-1))
+                # evidence_loss = evidence_loss * last_evidence_mask.view(-1)
+                # evidence_loss = torch.mean(evidence_loss)
                 self._evidence_loss(float(evidence_loss.detach().cpu()))
 
             if loss is None:

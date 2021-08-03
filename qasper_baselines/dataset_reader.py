@@ -354,6 +354,14 @@ class QasperReader(DatasetReader):
                 self._tokenizer.add_special_tokens(self._tokenizer.tokenize(answer))
             )
 
+        if 1 in evidence_mask:
+            last_ev_idx = len(evidence_mask) - 1 - evidence_mask[::-1].index(1)
+        else:
+            last_ev_idx = 0
+        last_evidence_mask = [1]*len(evidence_mask)
+        last_evidence_mask[last_ev_idx:] = [0]*(len(last_evidence_mask)-last_ev_idx)
+        fields["last_evidence_mask"] = TensorField(torch.tensor(last_evidence_mask))
+
         # make the metadata
         metadata = {
             "question": question,

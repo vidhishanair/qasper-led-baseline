@@ -29,6 +29,7 @@ local use_margin_loss_for_evidence = false;
 	#"max_document_length": 16384,
 	"for_training": true,
 	"insert_extra_sep_for_null": false,
+	"use_sentence_level_evidence": false,
 	"use_margin_loss_for_evidence": use_margin_loss_for_evidence,
 	"include_global_attention_on_para_indices": true
     },
@@ -39,6 +40,7 @@ local use_margin_loss_for_evidence = false;
 	#"max_document_length": 16384,
 	"for_training": false,
 	"insert_extra_sep_for_null": false,
+	"use_sentence_level_evidence": false,
 	"use_margin_loss_for_evidence": use_margin_loss_for_evidence,
 	"include_global_attention_on_para_indices": true
     },
