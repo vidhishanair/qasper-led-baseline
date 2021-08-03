@@ -39,6 +39,7 @@ class QasperBaseline(Model):
         use_margin_loss_for_evidence: bool = False,
         use_single_margin_loss: bool = False,
         per_reference_level_metrics: bool = False,
+        reset_top_layer_norm_weights: bool = False,
         resume_model_dir: str = None,
         resume_model_file: str = None,
         **kwargs
@@ -61,6 +62,9 @@ class QasperBaseline(Model):
             transformer_model_name,
             add_special_tokens=False
         )
+        if reset_top_layer_norm_weights:
+            self.transformer.led.encoder.layers[-1].final_layer_norm.weight.data.fill_(1.0)
+            self.transformer.led.encoder.layers[-1].final_layer_norm.bias.data.fill_(0.0)
 
         if evidence_feedforward:
             self.evidence_feedforward = evidence_feedforward
