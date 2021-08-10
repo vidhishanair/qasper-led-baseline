@@ -39,6 +39,7 @@ class QasperBaseline(Model):
         use_margin_loss_for_evidence: bool = False,
         use_single_margin_loss: bool = False,
         per_reference_level_metrics: bool = False,
+        add_position_embedding_offset:bool = False,
         reset_top_layer_norm_weights: bool = False,
         resume_model_dir: str = None,
         resume_model_file: str = None,
@@ -252,6 +253,7 @@ class QasperBaseline(Model):
                     predicted_evidence_indices = (predicted_evidence_scores > threshold).int().tolist()
                 else:
                     predicted_evidence_indices = evidence_logits.argmax(dim=-1).tolist()
+                #predicted_evidence_indices = [[0]*len(x) for x in predicted_evidence_indices]
                 gold_evidence_indices = [instance_metadata["all_evidence_masks"]
                                          for instance_metadata in metadata]
                 if not self.training:

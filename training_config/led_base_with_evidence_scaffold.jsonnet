@@ -8,18 +8,20 @@ local num_gradient_accumulation_steps = 2;
 #local train_data_path = "TODO";
 #local dev_data_path = "TODO";
 
-local train_data_path = "/data/qasper-train-v0.1.json";
-local dev_data_path = "/data/qasper-dev-v0.1.json";
+#local train_data_path = "/data/qasper-train-v0.1.json";
+#local dev_data_path = "/data/qasper-dev-v0.1.json";
 
 # local train_data_path = "/net/nfs2.corp/allennlp/vidhishab/data/qasper-train-dev-v0.1/qasper-train-v0.1.json";
 # local dev_data_path = "/net/nfs2.corp/allennlp/vidhishab/data/qasper-train-dev-v0.1/qasper-dev-v0.1.json";
+local train_data_path = "/home/vidhisha/qasper-train-dev-v0.1/qasper-train-v0.1.json";
+local dev_data_path = "/home/vidhisha/qasper-train-dev-v0.1/qasper-dev-v0.1.json";
 
 local training_data_size = 2672;
 local num_gpus = 1;
 local use_margin_loss_for_evidence = false;
 
-# local resume_model_dir = "/resume_model";
-# local resume_model_file = "arxiv-epoch=04-step=0-val_rouge1=0.0000-v1.ckpt";
+#local resume_model_dir = "/home/vidhisha/longdoc_pretrain/saved_models/led_base_1sentpass_evscaff_wsectionmarks_wglobalonsectionrougeLsum_top3_inplen16320_att1024_bs2_acc4/arxiv-epoch=04-step=0-val_rougeLsum_epochval/";
+#local resume_model_file = "val_rougeLsum_epoch=0.3967.ckpt";
 
 {
     "dataset_reader": {
@@ -29,7 +31,7 @@ local use_margin_loss_for_evidence = false;
 	#"max_document_length": 16384,
 	"for_training": true,
 	"insert_extra_sep_for_null": false,
-	"use_sentence_level_evidence": false,
+	"use_sentence_level_evidence": true,
 	"use_margin_loss_for_evidence": use_margin_loss_for_evidence,
 	"include_global_attention_on_para_indices": true
     },
@@ -40,7 +42,7 @@ local use_margin_loss_for_evidence = false;
 	#"max_document_length": 16384,
 	"for_training": false,
 	"insert_extra_sep_for_null": false,
-	"use_sentence_level_evidence": false,
+	"use_sentence_level_evidence": true,
 	"use_margin_loss_for_evidence": use_margin_loss_for_evidence,
 	"include_global_attention_on_para_indices": true
     },
@@ -54,11 +56,11 @@ local use_margin_loss_for_evidence = false;
         "transformer_model_name": transformer_model,
 	"attention_window_size": 1536,
 	"gradient_checkpointing": true,
-	"use_only_evidence_loss": true,
+	"use_only_evidence_loss": false,
     "use_evidence_scaffold": true,
     "use_margin_loss_for_evidence": use_margin_loss_for_evidence,
     "use_single_margin_loss": false,
-	"attention_dropout": 0.5,
+	"attention_dropout": 0.1,
 	"per_reference_level_metrics": false,
 	#"resume_model_dir": resume_model_dir,
 	#"resume_model_file": resume_model_file,
@@ -86,8 +88,8 @@ local use_margin_loss_for_evidence = false;
       "num_epochs": epochs,
       "num_gradient_accumulation_steps": num_gradient_accumulation_steps,
       "patience": epochs,
-      # "validation_metric": "+answer_f1",
-      "validation_metric": "+evidence_f1",
+      "validation_metric": "+answer_f1",
+      #"validation_metric": "+evidence_f1",
       "enable_default_callbacks": false,
       "use_amp": false,
       "cuda_device": 0,

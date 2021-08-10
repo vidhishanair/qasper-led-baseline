@@ -27,6 +27,7 @@ from allennlp.data.tokenizers import Token, PretrainedTransformerTokenizer
 
 
 logger = logging.getLogger(__name__)
+#nlp = spacy.load("en_core_sci_lg")
 
 
 class AnswerType(Enum):
@@ -112,7 +113,7 @@ class QasperReader(DatasetReader):
         self._tokenizer = PretrainedTransformerTokenizer(
             transformer_model_name, add_special_tokens=False
         )
-
+        
         self._include_global_attention_mask = include_global_attention_mask
         self._include_global_attention_on_para_indices = include_global_attention_on_para_indices
         self._insert_extra_sep_for_null = insert_extra_sep_for_null
@@ -155,9 +156,13 @@ class QasperReader(DatasetReader):
         logger.info("Reading json file at %s", file_path)
         with open_compressed(file_path) as dataset_file:
             dataset = json.load(dataset_file)
+        count = 0
         for article_id, article in self.shard_iterable(dataset.items()):
             if not article["full_text"]:
                 continue
+            count += 1
+            #if count >= 10:
+            #    break
             article["article_id"] = article_id
             yield from self._article_to_instances(article)
         self._log_stats()
@@ -202,6 +207,7 @@ class QasperReader(DatasetReader):
                 all_answers.append({"text": answer, "type": answer_type})
                 all_evidence.append(evidence)
                 evidence_mask = self._get_evidence_mask(evidence, paragraphs)
+                print("..........EOM........")
                 all_evidence_masks.append(evidence_mask)
 
             additional_metadata = {
@@ -228,20 +234,31 @@ class QasperReader(DatasetReader):
                     additional_metadata,
                 )
 
-    @staticmethod
-    def _get_evidence_mask(evidence: List[str], paragraphs: List[str]) -> List[int]:
+    #@staticmethod
+    def _get_evidence_mask(self, evidence: List[str], paragraphs: List[str]) -> List[int]:
         """
         Takes a list of evidence snippets, and the list of all the paragraphs from the
         paper, and returns a list of indices of the paragraphs that contain the evidence.
         """
         evidence_mask = []
+        print(evidence)
+        evidence_sents = []
+        for evidence_str in evidence:
+            sents = sent_tokenize(evidence_str)
+            evidence_sents.extend(sents)
         for paragraph in paragraphs:
-            for evidence_str in evidence:
+            for evidence_str in evidence_sents:
                 if evidence_str in paragraph:
                     evidence_mask.append(1)
+                    print(evidence_str, paragraph)
                     break
             else:
                 evidence_mask.append(0)
+        if len(evidence)>0:
+            self._stats["number of evidences"] += 1
+        if 1 in evidence_mask:
+            self._stats["number of evidence overlap"] += 1
+        self._stats["number of total contexts"] += 1
         return evidence_mask
 
     @overrides
@@ -452,13 +469,18 @@ class QasperReader(DatasetReader):
                 paragraphs.append(section_info["section_name"])
             for paragraph in section_info["paragraphs"]:
                 paragraph_text = paragraph.replace("\n", " ").strip()
-                sents = sent_tokenize(paragraph_text)
                 if self._use_sentence_level_evidence:
+                    sents = sent_tokenize(paragraph_text)
+                    #doc = nlp(paragraph_text)
+                    #sents = doc.sents
+                    #print(sents)
                     for sent in sents:
+                        #sent = sent.text
                         if sent:
                             paragraphs.append(sent)
-                if paragraph_text:
-                    paragraphs.append(paragraph_text)
+                else:
+                    if paragraph_text:
+                        paragraphs.append(paragraph_text)
             if self._context == "question_and_introduction":
                 # Assuming the first section is the introduction and stopping here.
                 break
