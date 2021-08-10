@@ -207,7 +207,6 @@ class QasperReader(DatasetReader):
                 all_answers.append({"text": answer, "type": answer_type})
                 all_evidence.append(evidence)
                 evidence_mask = self._get_evidence_mask(evidence, paragraphs)
-                print("..........EOM........")
                 all_evidence_masks.append(evidence_mask)
 
             additional_metadata = {
@@ -241,20 +240,21 @@ class QasperReader(DatasetReader):
         paper, and returns a list of indices of the paragraphs that contain the evidence.
         """
         evidence_mask = []
-        print(evidence)
         evidence_sents = []
         for evidence_str in evidence:
-            sents = sent_tokenize(evidence_str)
-            evidence_sents.extend(sents)
+            if self._use_sentence_level_evidence:
+                sents = sent_tokenize(evidence_str)
+                evidence_sents.extend(sents)
+            else:
+                evidence_sents.append(evidence_str)
         for paragraph in paragraphs:
             for evidence_str in evidence_sents:
                 if evidence_str in paragraph:
                     evidence_mask.append(1)
-                    print(evidence_str, paragraph)
                     break
             else:
                 evidence_mask.append(0)
-        if len(evidence)>0:
+        if len(evidence) > 0:
             self._stats["number of evidences"] += 1
         if 1 in evidence_mask:
             self._stats["number of evidence overlap"] += 1
@@ -471,11 +471,7 @@ class QasperReader(DatasetReader):
                 paragraph_text = paragraph.replace("\n", " ").strip()
                 if self._use_sentence_level_evidence:
                     sents = sent_tokenize(paragraph_text)
-                    #doc = nlp(paragraph_text)
-                    #sents = doc.sents
-                    #print(sents)
                     for sent in sents:
-                        #sent = sent.text
                         if sent:
                             paragraphs.append(sent)
                 else:
