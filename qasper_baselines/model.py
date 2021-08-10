@@ -4,7 +4,7 @@ import numpy as np
 from typing import Any, Dict, List, Tuple
 from overrides import overrides
 
-from transformers import AutoConfig, AutoModelForSeq2SeqLM, AutoTokenizer
+from transformers import AutoConfig, AutoModelForSeq2SeqLM, AutoTokenizer, AutoModel
 from transformers.models.led.modeling_led import shift_tokens_right
 import torch
 
@@ -50,6 +50,7 @@ class QasperBaseline(Model):
         config.attention_dropout = attention_dropout
         config.attention_window = [attention_window_size] * len(config.attention_window)
         config.gradient_checkpointing = gradient_checkpointing
+        self.longformer_model = False
         if resume_model_dir is not None:
             led_model = torch.load(os.path.join(resume_model_dir, resume_model_file))
             renamed_state_dict = {}
@@ -57,6 +58,9 @@ class QasperBaseline(Model):
                 new_key = k.replace("model.led.", "")
                 renamed_state_dict[new_key] = v
             self.transformer = AutoModelForSeq2SeqLM.from_pretrained(None, config=config, state_dict=renamed_state_dict)
+        if 'longformer' in transformer_model_name:
+            self.longformer_model = True
+            self.transformer = AutoModel.from_pretrained(transformer_model_name, config=config)
         else:
             self.transformer = AutoModelForSeq2SeqLM.from_pretrained(transformer_model_name, config=config)
         self.tokenizer = AutoTokenizer.from_pretrained(
@@ -120,7 +124,10 @@ class QasperBaseline(Model):
             return_dict=True,
             output_hidden_states=True,
         )
-        encoded_tokens = output["encoder_last_hidden_state"]
+        if self.longformer_model:
+            encoded_tokens = output["last_hidden_state"]
+        else:
+            encoded_tokens = output["encoder_last_hidden_state"]
 
         output_dict = {}
         output_dict["answer_logits"] = output["logits"]
