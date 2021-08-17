@@ -241,23 +241,36 @@ class QasperReader(DatasetReader):
         """
         evidence_mask = []
         evidence_sents = []
+        no_of_evidences = 0
         for evidence_str in evidence:
             if self._use_sentence_level_evidence:
                 sents = sent_tokenize(evidence_str)
                 evidence_sents.extend(sents)
+                no_of_evidences += len(sents)
             else:
                 evidence_sents.append(evidence_str)
+                no_of_evidences += 1
+        evidence_ov_idxs = [0]*len(evidence_sents)
         for paragraph in paragraphs:
-            for evidence_str in evidence_sents:
+            for idx, evidence_str in enumerate(evidence_sents):
                 if evidence_str in paragraph:
                     evidence_mask.append(1)
                     break
             else:
                 evidence_mask.append(0)
+        ev_pairs = []
+        for idx, evidence_str in enumerate(evidence_sents):
+            for paragraph in paragraphs:
+                if evidence_str in paragraph:
+                    ev_pairs.append((paragraph, evidence_str))
+                    evidence_ov_idxs[idx] = 1
+                    break
         if len(evidence) > 0:
             self._stats["number of evidences"] += 1
         if 1 in evidence_mask:
             self._stats["number of evidence overlap"] += 1
+        if len(evidence_sents)!=0 and sum(evidence_ov_idxs)==len(evidence_sents):
+            self._stats["number of all evidence overlap"] += 1
         self._stats["number of total contexts"] += 1
         return evidence_mask
 
