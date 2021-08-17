@@ -1,4 +1,5 @@
-local transformer_model = "allenai/led-base-16384";
+local transformer_model = "facebook/bart-base";
+# local transformer_model = "allenai/led-base-16384";
 # local transformer_model = "allenai/led-large-16384-arxiv";
 # local transformer_model = "allenai/led-large-16384";
 local epochs = 10;
@@ -8,11 +9,12 @@ local num_gradient_accumulation_steps = 2;
 #local train_data_path = "TODO";
 #local dev_data_path = "TODO";
 
-#local train_data_path = "/data/qasper-train-v0.1.json";
-#local dev_data_path = "/data/qasper-dev-v0.1.json";
+# local train_data_path = "/data/qasper-train-v0.1.json";
+# local dev_data_path = "/data/qasper-dev-v0.1.json";
 
 # local train_data_path = "/net/nfs2.corp/allennlp/vidhishab/data/qasper-train-dev-v0.1/qasper-train-v0.1.json";
 # local dev_data_path = "/net/nfs2.corp/allennlp/vidhishab/data/qasper-train-dev-v0.1/qasper-dev-v0.1.json";
+
 local train_data_path = "/home/vidhisha/qasper-train-dev-v0.1/qasper-train-v0.1.json";
 local dev_data_path = "/home/vidhisha/qasper-train-dev-v0.1/qasper-dev-v0.1.json";
 
@@ -20,14 +22,15 @@ local training_data_size = 2672;
 local num_gpus = 1;
 local use_margin_loss_for_evidence = false;
 
-#local resume_model_dir = "/home/vidhisha/longdoc_pretrain/saved_models/led_base_1sentpass_evscaff_wsectionmarks_wglobalonsectionrougeLsum_top3_inplen16320_att1024_bs2_acc4/arxiv-epoch=04-step=0-val_rougeLsum_epochval/";
-#local resume_model_file = "val_rougeLsum_epoch=0.3967.ckpt";
+# local resume_model_dir = "/home/vidhisha/longdoc_pretrain/saved_models/led_base_1sentpass_evscaff_wsectionmarks_wglobalonsectionrougeLsum_top3_inplen16320_att1024_bs2_acc4/arxiv-epoch=04-step=0-val_rougeLsum_epochval/";
+# local resume_model_file = "val_rougeLsum_epoch=0.3967.ckpt";
 
 {
     "dataset_reader": {
         "type": "qasper",
         "transformer_model_name": transformer_model,
 	"max_document_length": 15360,
+	# "max_document_length": 1024,
 	#"max_document_length": 16384,
 	"for_training": true,
 	"insert_extra_sep_for_null": false,

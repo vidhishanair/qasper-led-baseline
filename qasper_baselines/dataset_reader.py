@@ -290,6 +290,9 @@ class QasperReader(DatasetReader):
                     paragraphs
                 )
 
+        if 1 in evidence_mask:
+            self._stats['count_positive_evs'] += 1
+
         no_para_sep = 1
         if self._insert_extra_sep_for_null:
             no_para_sep += 1
