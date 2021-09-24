@@ -206,7 +206,7 @@ class QasperReader(DatasetReader):
                 )
                 all_answers.append({"text": answer, "type": answer_type})
                 all_evidence.append(evidence)
-                evidence_mask = self._get_evidence_mask(evidence, paragraphs)
+                evidence_mask, context_evidence_sents = self._get_evidence_mask(evidence, paragraphs)
                 all_evidence_masks.append(evidence_mask)
 
             additional_metadata = {
@@ -241,6 +241,7 @@ class QasperReader(DatasetReader):
         """
         evidence_mask = []
         evidence_sents = []
+        context_evidence_sents = []
         no_of_evidences = 0
         for evidence_str in evidence:
             if self._use_sentence_level_evidence:
@@ -255,6 +256,7 @@ class QasperReader(DatasetReader):
             for idx, evidence_str in enumerate(evidence_sents):
                 if evidence_str in paragraph:
                     evidence_mask.append(1)
+                    context_evidence_sents.append(paragraph)
                     break
             else:
                 evidence_mask.append(0)
@@ -272,7 +274,7 @@ class QasperReader(DatasetReader):
         if len(evidence_sents)!=0 and sum(evidence_ov_idxs)==len(evidence_sents):
             self._stats["number of all evidence overlap"] += 1
         self._stats["number of total contexts"] += 1
-        return evidence_mask
+        return evidence_mask, context_evidence_sents
 
     @overrides
     def text_to_instance(

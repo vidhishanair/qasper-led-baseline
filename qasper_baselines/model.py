@@ -41,6 +41,7 @@ class QasperBaseline(Model):
         per_reference_level_metrics: bool = False,
         add_position_embedding_offset:bool = False,
         reset_top_layer_norm_weights: bool = False,
+        freeze_non_position_weights: bool = False,
         resume_model_dir: str = None,
         resume_model_file: str = None,
         **kwargs
@@ -70,6 +71,14 @@ class QasperBaseline(Model):
         if reset_top_layer_norm_weights:
             self.transformer.led.encoder.layers[-1].final_layer_norm.weight.data.fill_(1.0)
             self.transformer.led.encoder.layers[-1].final_layer_norm.bias.data.fill_(0.0)
+
+        if freeze_non_position_weights:
+            for param in self.transformer.parameters():
+                param.requires_grad = False
+            self.transformer.led.decoder.embed_positions.weight.requires_grad = True
+            self.transformer.led.decoder.embed_positions.bias.requires_grad = True
+            self.transformer.led.encoder.embed_positions.weight.requires_grad = True
+            self.transformer.led.decoder.embed_positions.bias.requires_grad = True
 
         if evidence_feedforward:
             self.evidence_feedforward = evidence_feedforward
