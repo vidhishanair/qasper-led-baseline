@@ -40,6 +40,7 @@ class QasperBaseline(Model):
         use_single_margin_loss: bool = False,
         per_reference_level_metrics: bool = False,
         add_position_embedding_offset:bool = False,
+        randomly_initialize_model:bool = False,
         reset_top_layer_norm_weights: bool = False,
         freeze_non_position_weights: bool = False,
         resume_model_dir: str = None,
@@ -63,7 +64,10 @@ class QasperBaseline(Model):
         if 'longformer' in transformer_model_name:
             self.transformer = AutoModel.from_pretrained(transformer_model_name, config=config)
         else:
-            self.transformer = AutoModelForSeq2SeqLM.from_pretrained(transformer_model_name, config=config)
+            if randomly_initialize_model:
+                self.transformer = AutoModelForSeq2SeqLM.from_config(config)
+            else:
+                self.transformer = AutoModelForSeq2SeqLM.from_pretrained(transformer_model_name, config=config)
         self.tokenizer = AutoTokenizer.from_pretrained(
             transformer_model_name,
             add_special_tokens=False
@@ -76,9 +80,7 @@ class QasperBaseline(Model):
             for param in self.transformer.parameters():
                 param.requires_grad = False
             self.transformer.led.decoder.embed_positions.weight.requires_grad = True
-            #self.transformer.led.decoder.embed_positions.bias.requires_grad = True
             self.transformer.led.encoder.embed_positions.weight.requires_grad = True
-            #self.transformer.led.decoder.embed_positions.bias.requires_grad = True
 
         if evidence_feedforward:
             self.evidence_feedforward = evidence_feedforward
