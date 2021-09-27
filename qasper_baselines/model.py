@@ -76,9 +76,9 @@ class QasperBaseline(Model):
             for param in self.transformer.parameters():
                 param.requires_grad = False
             self.transformer.led.decoder.embed_positions.weight.requires_grad = True
-            self.transformer.led.decoder.embed_positions.bias.requires_grad = True
+            #self.transformer.led.decoder.embed_positions.bias.requires_grad = True
             self.transformer.led.encoder.embed_positions.weight.requires_grad = True
-            self.transformer.led.decoder.embed_positions.bias.requires_grad = True
+            #self.transformer.led.decoder.embed_positions.bias.requires_grad = True
 
         if evidence_feedforward:
             self.evidence_feedforward = evidence_feedforward

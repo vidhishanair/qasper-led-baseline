@@ -1,10 +1,16 @@
-local transformer_model = "facebook/bart-base";
-# local transformer_model = "allenai/led-base-16384";
+# local transformer_model = "facebook/bart-base";
+local transformer_model = "allenai/led-base-16384";
 # local transformer_model = "allenai/led-large-16384-arxiv";
 # local transformer_model = "allenai/led-large-16384";
-local epochs = 10;
+#local epochs = 10;
+local epochs = 50;
 local batch_size = 1;
-local num_gradient_accumulation_steps = 2;
+#local num_gradient_accumulation_steps = 2;
+#local num_gradient_accumulation_steps = 4;
+local num_gradient_accumulation_steps = 8;
+#local num_gradient_accumulation_steps = 16;
+#local num_gradient_accumulation_steps = 32;
+#local num_gradient_accumulation_steps = 64;
 
 #local train_data_path = "TODO";
 #local dev_data_path = "TODO";
@@ -32,9 +38,10 @@ local use_margin_loss_for_evidence = false;
 	"max_document_length": 15360,
 	# "max_document_length": 1024,
 	#"max_document_length": 16384,
+	#"paragraph_separator": "madeupword0000",
 	"for_training": true,
 	"insert_extra_sep_for_null": false,
-	"use_sentence_level_evidence": true,
+	"use_sentence_level_evidence": false,
 	"use_margin_loss_for_evidence": use_margin_loss_for_evidence,
 	"include_global_attention_on_para_indices": true
     },
@@ -43,9 +50,10 @@ local use_margin_loss_for_evidence = false;
         "transformer_model_name": transformer_model,
 	"max_document_length": 15360,
 	#"max_document_length": 16384,
+	#"paragraph_separator": "madeupword0000",
 	"for_training": false,
 	"insert_extra_sep_for_null": false,
-	"use_sentence_level_evidence": true,
+	"use_sentence_level_evidence": false,
 	"use_margin_loss_for_evidence": use_margin_loss_for_evidence,
 	"include_global_attention_on_para_indices": true
     },
@@ -65,6 +73,7 @@ local use_margin_loss_for_evidence = false;
     "use_single_margin_loss": false,
 	"attention_dropout": 0.1,
 	"per_reference_level_metrics": false,
+        #"freeze_non_position_weights": true,
 	#"resume_model_dir": resume_model_dir,
 	#"resume_model_file": resume_model_file,
     },
@@ -75,11 +84,18 @@ local use_margin_loss_for_evidence = false;
       "optimizer": {
         "type": "adam",
         "lr": 5e-5,
+        #"lr": 1e-5,
+        #"lr": 5e-4,
+        #"lr": 1e-4,
+        #"lr": 5e-6,
+        #"lr": 1e-6,
       },
       "learning_rate_scheduler": {
         "type": "slanted_triangular",
         "num_epochs": epochs,
-        "cut_frac": 0.1,
+        #"cut_frac": 0.1,
+        #"cut_frac": 0.2,
+        "cut_frac": 0.05,
         "num_steps_per_epoch": std.ceil(training_data_size / (batch_size * num_gradient_accumulation_steps * num_gpus)),
       },
       "callbacks": [
@@ -97,5 +113,7 @@ local use_margin_loss_for_evidence = false;
       "use_amp": false,
       "cuda_device": 0,
     },
-    "pytorch_seed": 15371,
+    #"pytorch_seed": 15371,
+    #"pytorch_seed": 1234,
+    "pytorch_seed": 6487,
 }
