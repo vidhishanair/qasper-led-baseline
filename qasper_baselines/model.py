@@ -54,9 +54,13 @@ class QasperBaseline(Model):
         config.gradient_checkpointing = gradient_checkpointing
         if resume_model_dir is not None:
             led_model = torch.load(os.path.join(resume_model_dir, resume_model_file))
+            #renamed_state_dict = led_model
             renamed_state_dict = {}
-            for k, v in led_model["state_dict"].items():
-                new_key = k.replace("model.led.", "")
+            #print(led_model)
+            #for k, v in led_model["state_dict"].items():
+            for k, v in led_model.items():
+                new_key = k.replace("transformer.", "")
+                new_key = new_key.replace("led.", "")
                 renamed_state_dict[new_key] = v
             self.transformer = AutoModelForSeq2SeqLM.from_pretrained(None, config=config, state_dict=renamed_state_dict)
         self.transformer_model_name = transformer_model_name
@@ -134,6 +138,17 @@ class QasperBaseline(Model):
                 return_dict=True,
                 output_hidden_states=True,
             )
+        #else:
+        if 'longformer' in self.transformer_model_name:
+            output = self.transformer(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                global_attention_mask=global_attention_mask,
+                #labels=answer_ids,
+                #use_cache=False,
+                return_dict=True,
+                output_hidden_states=True,
+            )
         else:
             output = self.transformer(
                 input_ids=input_ids,
@@ -150,9 +165,9 @@ class QasperBaseline(Model):
             encoded_tokens = output["encoder_last_hidden_state"]
 
         output_dict = {}
-        output_dict["answer_logits"] = output["logits"]
+        #output_dict["answer_logits"] = output["logits"]
         loss = None
-        if answer is not None:
+        if not self._use_only_evidence_loss and answer is not None:
             loss = output['loss']
             if not self.training:
                 # Computing evaluation metrics
