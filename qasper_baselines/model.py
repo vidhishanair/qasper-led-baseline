@@ -195,6 +195,8 @@ class QasperBaseline(Model):
                     for i in range(generated_token_ids.size(0))
                 ]
                 output_dict["predicted_answers"] = predicted_answers
+                print(predicted_answers)
+                exit()
                 gold_answers = [instance_metadata["all_answers"] for instance_metadata in metadata]
                 for predicted_answer, gold_answer in zip(predicted_answers, gold_answers):
                     f1s_with_types = []

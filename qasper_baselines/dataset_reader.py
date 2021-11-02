@@ -95,11 +95,13 @@ class QasperReader(DatasetReader):
         max_query_length: int = 128,
         max_document_length: int = 16384,
         paragraph_separator: Optional[str] = "</s>",
+        use_unique_paragraph_separators: bool = False,
         include_global_attention_mask: bool = True,
         include_global_attention_on_para_indices: bool = True,
         insert_extra_sep_for_null: bool = False,
         use_margin_loss_for_evidence: bool = False,
         use_sentence_level_evidence: bool = False,
+        generate_evidence: bool = False,
         context: str = "full_text",
         for_training: bool = False,
         **kwargs,
@@ -119,6 +121,8 @@ class QasperReader(DatasetReader):
         self._insert_extra_sep_for_null = insert_extra_sep_for_null
         self._use_margin_loss_for_evidence = use_margin_loss_for_evidence
         self._use_sentence_level_evidence = use_sentence_level_evidence
+        self._use_unique_paragraph_separators = use_unique_paragraph_separators
+        self._generate_evidence = generate_evidence
         self._token_indexers = {
             "tokens": PretrainedTransformerIndexer(transformer_model_name)
         }
@@ -351,6 +355,8 @@ class QasperReader(DatasetReader):
             paragraph_indices_list = [start_of_context]+[x + start_of_context + 1 for x in paragraph_start_indices]
         elif self._use_margin_loss_for_evidence:
             paragraph_indices_list = [0]+[x + start_of_context for x in paragraph_start_indices]
+        elif self._use_unique_paragraph_separators:
+            paragraph_indices_list = [x + start_of_context + 1 for x in paragraph_start_indices]
         else:
             paragraph_indices_list = [x + start_of_context for x in paragraph_start_indices]
 
@@ -388,6 +394,14 @@ class QasperReader(DatasetReader):
             fields["answer"] = TextField(
                 self._tokenizer.add_special_tokens(self._tokenizer.tokenize(answer))
             )
+        if self._generate_evidence:
+            evidence_dec_tokens = ""
+            for idx, ev in enumerate(evidence_mask):
+                if ev == 1:
+                    evidence_dec_tokens += "P"+str(idx)+" "
+            fields["answer"] = TextField(
+                self._tokenizer.add_special_tokens(self._tokenizer.tokenize(evidence_dec_tokens))
+            )
 
         if 1 in evidence_mask:
             last_ev_idx = len(evidence_mask) - 1 - evidence_mask[::-1].index(1)
@@ -419,13 +433,15 @@ class QasperReader(DatasetReader):
     ) -> Tuple[List[Token], List[int]]:
         tokenized_context = []
         paragraph_start_indices = []
-        for paragraph in paragraphs:
-            tokenized_paragraph = self._tokenizer.tokenize(paragraph)
+        for idx, paragraph in enumerate(paragraphs):
             paragraph_start_indices.append(len(tokenized_context))
+            if self._use_unique_paragraph_separators:
+                tokenized_context.append(Token("P"+str(idx)))
+            tokenized_paragraph = self._tokenizer.tokenize(paragraph)
             tokenized_context.extend(tokenized_paragraph)
-            if self._paragraph_separator:
+            if self._paragraph_separator and not self._use_unique_paragraph_separators:
                 tokenized_context.append(Token(self._paragraph_separator))
-        if self._paragraph_separator:
+        if self._paragraph_separator and not self._use_unique_paragraph_separators:
             # We added the separator after every paragraph, so we remove it after the last one.
             tokenized_context = tokenized_context[:-1]
         return tokenized_context, paragraph_start_indices
