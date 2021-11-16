@@ -56,14 +56,15 @@ class QasperBaseline(Model):
         config.gradient_checkpointing = gradient_checkpointing
         if resume_model_dir is not None:
             led_model = torch.load(os.path.join(resume_model_dir, resume_model_file))
-            #renamed_state_dict = led_model
             renamed_state_dict = {}
-            #print(led_model)
-            #for k, v in led_model["state_dict"].items():
-            for k, v in led_model.items():
-                new_key = k.replace("transformer.", "")
-                new_key = new_key.replace("led.", "")
-                renamed_state_dict[new_key] = v
+            if "state_dict" in led_model:
+                for k, v in led_model["state_dict"].items():
+                    new_key = k.replace("model.led.", "")
+            else:
+                for k, v in led_model.items():
+                    new_key = k.replace("transformer.", "")
+                    new_key = new_key.replace("led.", "")
+                    renamed_state_dict[new_key] = v
             self.transformer = AutoModelForSeq2SeqLM.from_pretrained(None, config=config, state_dict=renamed_state_dict)
         self.transformer_model_name = transformer_model_name
         if 'longformer' in transformer_model_name:
