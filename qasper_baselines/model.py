@@ -36,6 +36,7 @@ class QasperBaseline(Model):
         evidence_feedforward: FeedForward = None,
         use_only_evidence_loss: bool = False,
         use_evidence_scaffold: bool = True,
+        generate_evidence:bool = False,
         use_margin_loss_for_evidence: bool = False,
         use_single_margin_loss: bool = False,
         per_reference_level_metrics: bool = False,
@@ -100,6 +101,7 @@ class QasperBaseline(Model):
                 )
         self._use_only_evidence_loss = use_only_evidence_loss
         self._use_evidence_scaffold = use_evidence_scaffold
+        self._generate_evidence = generate_evidence
         self._use_margin_loss_for_evidence = use_margin_loss_for_evidence
         self._use_single_margin_loss = use_single_margin_loss
         self._per_reference_level_metrics = per_reference_level_metrics
@@ -195,23 +197,33 @@ class QasperBaseline(Model):
                     for i in range(generated_token_ids.size(0))
                 ]
                 output_dict["predicted_answers"] = predicted_answers
-                print(predicted_answers)
-                exit()
                 gold_answers = [instance_metadata["all_answers"] for instance_metadata in metadata]
-                for predicted_answer, gold_answer in zip(predicted_answers, gold_answers):
-                    f1s_with_types = []
-                    for gold_answer_info in gold_answer:
-                        f1 = squad.compute_f1(predicted_answer, gold_answer_info['text'])
-                        f1s_with_types.append((f1, gold_answer_info['type']))
+                if self._generate_evidence:
+                    gold_answers = [instance_metadata["ev_gen_answer"] for instance_metadata in metadata]
+                    for predicted_answer, gold_answer in zip(predicted_answers, gold_answers):
+                        print('here')
+                        print(predicted_answer)
+                        print(gold_answer)
+                        #f1s_with_types = []
+                        #for gold_answer_info in gold_answer:
+                        f1 = squad.compute_f1(predicted_answer, gold_answer)
+                        self._answer_f1(f1)
+                else:
+                    for predicted_answer, gold_answer in zip(predicted_answers, gold_answers):
+                        f1s_with_types = []
+                        for gold_answer_info in gold_answer:
+                            f1 = squad.compute_f1(predicted_answer, gold_answer_info['text'])
+                            #f1 = squad.compute_f1(predicted_answer, gold_answer_info)
+                            f1s_with_types.append((f1, gold_answer_info['type']))
 
-                        if self._per_reference_level_metrics:
-                            self._answer_f1(f1)
-                            self._answer_f1_by_type[gold_answer_info['type']](f1)
+                            if self._per_reference_level_metrics:
+                                self._answer_f1(f1)
+                                self._answer_f1_by_type[gold_answer_info['type']](f1)
 
-                    if not self._per_reference_level_metrics:
-                        max_f1, max_f1_answer_type = sorted(f1s_with_types, key=lambda x: x[0])[-1]
-                        self._answer_f1(max_f1)
-                        self._answer_f1_by_type[max_f1_answer_type](max_f1)
+                        if not self._per_reference_level_metrics:
+                            max_f1, max_f1_answer_type = sorted(f1s_with_types, key=lambda x: x[0])[-1]
+                            self._answer_f1(max_f1)
+                            self._answer_f1_by_type[max_f1_answer_type](max_f1)
 
         if self._use_evidence_scaffold and evidence is not None:
             paragraph_indices = paragraph_indices.squeeze(-1)

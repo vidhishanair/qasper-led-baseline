@@ -3,8 +3,8 @@ local transformer_model = "allenai/led-base-16384";
 # local transformer_model = "allenai/led-large-16384-arxiv";
 # local transformer_model = "allenai/led-large-16384";
 # local transformer_model = "allenai/longformer-base-4096";
-#local epochs = 10;
 local epochs = 25;
+#local epochs = 75;
 local batch_size = 1;
 local num_gradient_accumulation_steps = 8;
 #local num_gradient_accumulation_steps = 2;
@@ -30,8 +30,8 @@ local training_data_size = 2672;
 local num_gpus = 1;
 local use_margin_loss_for_evidence = false;
 
-# local resume_model_dir = "/mnt/disks/disk2/qasper_led_baseline/saved_models/model_comp/qasper_led_large_evonly_inplen4096_ep25_bs1_gacc8_attdrp0.1_lr5e-5_seed6487/";
-# local resume_model_file = "best.th";
+#local resume_model_dir = "/mnt/disks/disk2/qasper_led_baseline/saved_models/model_comp/qasper_led_base_evonly_ep25_bs1_gacc8_attdrp0.1_lr5e-5_seed6487/";
+#local resume_model_file = "best.th";
 
 {
     "dataset_reader": {
@@ -46,7 +46,7 @@ local use_margin_loss_for_evidence = false;
 	"insert_extra_sep_for_null": false,
 	"use_sentence_level_evidence": false,
 	"use_margin_loss_for_evidence": use_margin_loss_for_evidence,
-	"include_global_attention_on_para_indices": false
+	"include_global_attention_on_para_indices": true
     },
     "validation_dataset_reader": {
         "type": "qasper",
@@ -59,7 +59,7 @@ local use_margin_loss_for_evidence = false;
 	"insert_extra_sep_for_null": false,
 	"use_sentence_level_evidence": false,
 	"use_margin_loss_for_evidence": use_margin_loss_for_evidence,
-	"include_global_attention_on_para_indices": false
+	"include_global_attention_on_para_indices": true
     },
     "train_data_path": train_data_path,
     "validation_data_path": dev_data_path,
@@ -72,8 +72,8 @@ local use_margin_loss_for_evidence = false;
 	"attention_window_size": 1536,
 	# "attention_window_size": 4096,
 	"gradient_checkpointing": true,
-	"use_only_evidence_loss": true,
-    "use_evidence_scaffold": true,
+	"use_only_evidence_loss": false,
+    "use_evidence_scaffold": false,
     "use_margin_loss_for_evidence": use_margin_loss_for_evidence,
     "use_single_margin_loss": false,
 	"attention_dropout": 0.1,
@@ -114,8 +114,8 @@ local use_margin_loss_for_evidence = false;
       "num_epochs": epochs,
       "num_gradient_accumulation_steps": num_gradient_accumulation_steps,
       "patience": epochs,
-      #"validation_metric": "+answer_f1",
-      "validation_metric": "+evidence_f1",
+      "validation_metric": "+answer_f1",
+      #"validation_metric": "+evidence_f1",
       "enable_default_callbacks": false,
       "use_amp": false,
       "cuda_device": 0,

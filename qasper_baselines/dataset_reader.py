@@ -394,15 +394,15 @@ class QasperReader(DatasetReader):
             fields["answer"] = TextField(
                 self._tokenizer.add_special_tokens(self._tokenizer.tokenize(answer))
             )
+        evidence_dec_tokens = None
         if self._generate_evidence:
-            evidence_dec_tokens = ""
+            evidence_dec_tokens = str(sum(evidence_mask))+" "
             for idx, ev in enumerate(evidence_mask):
                 if ev == 1:
                     evidence_dec_tokens += "P"+str(idx)+" "
             fields["answer"] = TextField(
                 self._tokenizer.add_special_tokens(self._tokenizer.tokenize(evidence_dec_tokens))
             )
-
         if 1 in evidence_mask:
             last_ev_idx = len(evidence_mask) - 1 - evidence_mask[::-1].index(1)
         else:
@@ -418,6 +418,8 @@ class QasperReader(DatasetReader):
             "paragraphs": paragraphs,
             "context_tokens": tokenized_context,
         }
+        if evidence_dec_tokens is not None:
+            metadata["ev_gen_answer"] = evidence_dec_tokens
         if additional_metadata is not None:
             metadata.update(additional_metadata)
         fields["metadata"] = MetadataField(metadata)
