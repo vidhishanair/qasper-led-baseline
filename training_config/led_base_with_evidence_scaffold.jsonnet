@@ -30,8 +30,8 @@ local training_data_size = 2672;
 local num_gpus = 1;
 local use_margin_loss_for_evidence = false;
 
-#local resume_model_dir = "/mnt/disks/disk2/qasper_led_baseline/saved_models/model_comp/qasper_led_base_evonly_ep25_bs1_gacc8_attdrp0.1_lr5e-5_seed6487/";
-#local resume_model_file = "best.th";
+local resume_model_dir = "/home/vidhisha/longdoc_pretrain/led_base_4sentpass_wevscaff_wsectionmarks_wglobalonsectionrougeLsum_top3_fp32_inplen16320_att1024_lr5e-5_bs2_acc8_ep10/arxiv-epoch=04-step=0-val_rougeLsum_epochval";
+local resume_model_file = "val_rougeLsum_epoch=0.4042.ckpt";
 
 {
     "dataset_reader": {
@@ -73,15 +73,15 @@ local use_margin_loss_for_evidence = false;
 	# "attention_window_size": 4096,
 	"gradient_checkpointing": true,
 	"use_only_evidence_loss": false,
-    "use_evidence_scaffold": false,
+    "use_evidence_scaffold": true,
     "use_margin_loss_for_evidence": use_margin_loss_for_evidence,
     "use_single_margin_loss": false,
 	"attention_dropout": 0.1,
 	"per_reference_level_metrics": false,
     #"freeze_non_position_weights": true,
     #"randomly_initialize_model": true,
-	#"resume_model_dir": resume_model_dir,
-        #"resume_model_file": resume_model_file,
+	"resume_model_dir": resume_model_dir,
+        "resume_model_file": resume_model_file,
     },
     "data_loader": {
         "batch_size": batch_size,

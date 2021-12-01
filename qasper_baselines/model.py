@@ -54,17 +54,19 @@ class QasperBaseline(Model):
         if 'bart' in transformer_model_name:
             config.attention_window = [attention_window_size] * len(config.attention_window)
         config.gradient_checkpointing = gradient_checkpointing
+        renamed_state_dict = {}
         if resume_model_dir is not None:
             led_model = torch.load(os.path.join(resume_model_dir, resume_model_file))
-            renamed_state_dict = {}
             if "state_dict" in led_model:
                 for k, v in led_model["state_dict"].items():
                     new_key = k.replace("model.led.", "")
+                    renamed_state_dict[new_key] = v
             else:
                 for k, v in led_model.items():
                     new_key = k.replace("transformer.", "")
                     new_key = new_key.replace("led.", "")
                     renamed_state_dict[new_key] = v
+            print(renamed_state_dict.keys())
             self.transformer = AutoModelForSeq2SeqLM.from_pretrained(None, config=config, state_dict=renamed_state_dict)
         self.transformer_model_name = transformer_model_name
         if 'longformer' in transformer_model_name:
@@ -100,6 +102,10 @@ class QasperBaseline(Model):
                 self.evidence_feedforward = torch.nn.Linear(
                     self.transformer.config.hidden_size, 2
                 )
+                with torch.no_grad():
+                    if resume_model_dir is not None:
+                        self.evidence_feedforward.weight.copy_(renamed_state_dict["evidence_feedforward.weight"])
+                        self.evidence_feedforward.bias.copy_(renamed_state_dict["evidence_feedforward.bias"])
         self._use_only_evidence_loss = use_only_evidence_loss
         self._use_evidence_scaffold = use_evidence_scaffold
         self._generate_evidence = generate_evidence
