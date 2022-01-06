@@ -1,7 +1,7 @@
 # local transformer_model = "facebook/bart-base";
-local transformer_model = "allenai/led-base-16384";
-# local transformer_model = "allenai/led-large-16384-arxiv";
-# local transformer_model = "allenai/led-large-16384";
+# local transformer_model = "allenai/led-base-16384";
+#local transformer_model = "allenai/led-large-16384-arxiv";
+local transformer_model = "allenai/led-large-16384";
 # local transformer_model = "allenai/longformer-base-4096";
 local epochs = 25;
 #local epochs = 75;
@@ -30,8 +30,8 @@ local training_data_size = 2672;
 local num_gpus = 1;
 local use_margin_loss_for_evidence = false;
 
-local resume_model_dir = "/home/vidhisha/longdoc_pretrain/led_base_4sentpass_wevscaff_wsectionmarks_wglobalonsectionrougeLsum_top3_fp32_inplen16320_att1024_lr5e-5_bs2_acc8_ep10/arxiv-epoch=04-step=0-val_rougeLsum_epochval";
-local resume_model_file = "val_rougeLsum_epoch=0.4042.ckpt";
+local resume_model_dir = "/mnt/disks/disk2/longdoc_pretrain/saved_models/led_large_1sentpass_wevscaff_wsectionmarks_wglobalonsectionrougeLsum_top3_inplen16320_att1024_lr5e-5_bs2_acc8_ep5/";
+local resume_model_file = "val_rougeLsum_epoch=0.3868.ckpt";
 
 {
     "dataset_reader": {

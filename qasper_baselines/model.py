@@ -66,7 +66,7 @@ class QasperBaseline(Model):
                     new_key = k.replace("transformer.", "")
                     new_key = new_key.replace("led.", "")
                     renamed_state_dict[new_key] = v
-            print(renamed_state_dict.keys())
+            #print(renamed_state_dict.keys())
             self.transformer = AutoModelForSeq2SeqLM.from_pretrained(None, config=config, state_dict=renamed_state_dict)
         self.transformer_model_name = transformer_model_name
         if 'longformer' in transformer_model_name:
@@ -103,7 +103,8 @@ class QasperBaseline(Model):
                     self.transformer.config.hidden_size, 2
                 )
                 with torch.no_grad():
-                    if resume_model_dir is not None:
+                    if resume_model_dir is not None and 'evidence_feedforward.weight' in renamed_state_dict:
+                        print("Loading evidence feedforward weights")
                         self.evidence_feedforward.weight.copy_(renamed_state_dict["evidence_feedforward.weight"])
                         self.evidence_feedforward.bias.copy_(renamed_state_dict["evidence_feedforward.bias"])
         self._use_only_evidence_loss = use_only_evidence_loss
