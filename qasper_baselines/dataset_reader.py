@@ -4,6 +4,7 @@ import random
 from enum import Enum
 from collections import defaultdict
 from typing import Any, Dict, List, Optional, Iterable, Tuple
+from nltk.tokenize import sent_tokenize
 
 from overrides import overrides
 
@@ -26,6 +27,7 @@ from allennlp.data.tokenizers import Token, PretrainedTransformerTokenizer
 
 
 logger = logging.getLogger(__name__)
+#nlp = spacy.load("en_core_sci_lg")
 
 
 class AnswerType(Enum):
@@ -93,8 +95,13 @@ class QasperReader(DatasetReader):
         max_query_length: int = 128,
         max_document_length: int = 16384,
         paragraph_separator: Optional[str] = "</s>",
+        use_unique_paragraph_separators: bool = False,
         include_global_attention_mask: bool = True,
         include_global_attention_on_para_indices: bool = True,
+        insert_extra_sep_for_null: bool = False,
+        use_margin_loss_for_evidence: bool = False,
+        use_sentence_level_evidence: bool = False,
+        generate_evidence: bool = False,
         context: str = "full_text",
         for_training: bool = False,
         **kwargs,
@@ -108,9 +115,14 @@ class QasperReader(DatasetReader):
         self._tokenizer = PretrainedTransformerTokenizer(
             transformer_model_name, add_special_tokens=False
         )
-
+        
         self._include_global_attention_mask = include_global_attention_mask
         self._include_global_attention_on_para_indices = include_global_attention_on_para_indices
+        self._insert_extra_sep_for_null = insert_extra_sep_for_null
+        self._use_margin_loss_for_evidence = use_margin_loss_for_evidence
+        self._use_sentence_level_evidence = use_sentence_level_evidence
+        self._use_unique_paragraph_separators = use_unique_paragraph_separators
+        self._generate_evidence = generate_evidence
         self._token_indexers = {
             "tokens": PretrainedTransformerIndexer(transformer_model_name)
         }
@@ -148,9 +160,13 @@ class QasperReader(DatasetReader):
         logger.info("Reading json file at %s", file_path)
         with open_compressed(file_path) as dataset_file:
             dataset = json.load(dataset_file)
+        count = 0
         for article_id, article in self.shard_iterable(dataset.items()):
             if not article["full_text"]:
                 continue
+            count += 1
+            #if count >= 10:
+            #    break
             article["article_id"] = article_id
             yield from self._article_to_instances(article)
         self._log_stats()
@@ -194,7 +210,7 @@ class QasperReader(DatasetReader):
                 )
                 all_answers.append({"text": answer, "type": answer_type})
                 all_evidence.append(evidence)
-                evidence_mask = self._get_evidence_mask(evidence, paragraphs)
+                evidence_mask, context_evidence_sents = self._get_evidence_mask(evidence, paragraphs)
                 all_evidence_masks.append(evidence_mask)
 
             additional_metadata = {
@@ -221,21 +237,48 @@ class QasperReader(DatasetReader):
                     additional_metadata,
                 )
 
-    @staticmethod
-    def _get_evidence_mask(evidence: List[str], paragraphs: List[str]) -> List[int]:
+    #@staticmethod
+    def _get_evidence_mask(self, evidence: List[str], paragraphs: List[str]) -> List[int]:
         """
         Takes a list of evidence snippets, and the list of all the paragraphs from the
         paper, and returns a list of indices of the paragraphs that contain the evidence.
         """
         evidence_mask = []
+        evidence_sents = []
+        context_evidence_sents = []
+        no_of_evidences = 0
+        for evidence_str in evidence:
+            if self._use_sentence_level_evidence:
+                sents = sent_tokenize(evidence_str)
+                evidence_sents.extend(sents)
+                no_of_evidences += len(sents)
+            else:
+                evidence_sents.append(evidence_str)
+                no_of_evidences += 1
+        evidence_ov_idxs = [0]*len(evidence_sents)
         for paragraph in paragraphs:
-            for evidence_str in evidence:
+            for idx, evidence_str in enumerate(evidence_sents):
                 if evidence_str in paragraph:
                     evidence_mask.append(1)
+                    context_evidence_sents.append(paragraph)
                     break
             else:
                 evidence_mask.append(0)
-        return evidence_mask
+        ev_pairs = []
+        for idx, evidence_str in enumerate(evidence_sents):
+            for paragraph in paragraphs:
+                if evidence_str in paragraph:
+                    ev_pairs.append((paragraph, evidence_str))
+                    evidence_ov_idxs[idx] = 1
+                    break
+        if len(evidence) > 0:
+            self._stats["number of evidences"] += 1
+        if 1 in evidence_mask:
+            self._stats["number of evidence overlap"] += 1
+        if len(evidence_sents)!=0 and sum(evidence_ov_idxs)==len(evidence_sents):
+            self._stats["number of all evidence overlap"] += 1
+        self._stats["number of total contexts"] += 1
+        return evidence_mask, context_evidence_sents
 
     @overrides
     def text_to_instance(
@@ -266,11 +309,17 @@ class QasperReader(DatasetReader):
                     paragraphs
                 )
 
+        if 1 in evidence_mask:
+            self._stats['count_positive_evs'] += 1
+
+        no_para_sep = 1
+        if self._insert_extra_sep_for_null:
+            no_para_sep += 1
         allowed_context_length = (
                 self.max_document_length
                 - len(tokenized_question)
                 - len(self._tokenizer.sequence_pair_start_tokens)
-                - 1  # for paragraph seperator
+                - no_para_sep  # for paragraph seperator
         )
         if len(tokenized_context) > allowed_context_length:
             self._stats["number of truncated contexts"] += 1
@@ -281,23 +330,42 @@ class QasperReader(DatasetReader):
                 num_paragraphs = len(paragraph_start_indices)
                 evidence_mask = evidence_mask[:num_paragraphs]
 
-        # This is what Iz's code does.
+        # # # # This is what Iz's code does.
         question_and_context = (
-            self._tokenizer.sequence_pair_start_tokens
-            + tokenized_question
-            + [Token(self._paragraph_separator)]
-            + tokenized_context
+                self._tokenizer.sequence_pair_start_tokens
+                + tokenized_question
+        )
+        if self._insert_extra_sep_for_null:
+            question_and_context += (
+                 [Token(self._paragraph_separator)]
+            )
+        question_and_context += (
+                [Token(self._paragraph_separator)]
+                + tokenized_context
         )
         # make the question field
         question_field = TextField(question_and_context)
         fields["question_with_context"] = question_field
 
         start_of_context = (
-            len(self._tokenizer.sequence_pair_start_tokens)
-            + len(tokenized_question)
+                len(self._tokenizer.sequence_pair_start_tokens)
+                + len(tokenized_question)
         )
+        if self._insert_extra_sep_for_null:
+            paragraph_indices_list = [start_of_context]+[x + start_of_context + 1 for x in paragraph_start_indices]
+        elif self._use_margin_loss_for_evidence:
+            paragraph_indices_list = [0]+[x + start_of_context for x in paragraph_start_indices]
+        elif self._use_unique_paragraph_separators:
+            paragraph_indices_list = [x + start_of_context + 1 for x in paragraph_start_indices]
+        else:
+            paragraph_indices_list = [x + start_of_context for x in paragraph_start_indices]
 
-        paragraph_indices_list = [x + start_of_context for x in paragraph_start_indices]
+        if evidence_mask is not None and self._use_margin_loss_for_evidence:
+            evidence_mask = [1]+evidence_mask
+            # if sum(evidence_mask) == 0:
+            #     evidence_mask = [1]+evidence_mask
+            # else:
+            #     evidence_mask = [0]+evidence_mask
 
         paragraph_indices_field = ListField(
             [IndexField(x, question_field) for x in paragraph_indices_list] if paragraph_indices_list else
@@ -326,6 +394,22 @@ class QasperReader(DatasetReader):
             fields["answer"] = TextField(
                 self._tokenizer.add_special_tokens(self._tokenizer.tokenize(answer))
             )
+        evidence_dec_tokens = None
+        if self._generate_evidence:
+            evidence_dec_tokens = str(sum(evidence_mask))+" "
+            for idx, ev in enumerate(evidence_mask):
+                if ev == 1:
+                    evidence_dec_tokens += "P"+str(idx)+" "
+            fields["answer"] = TextField(
+                self._tokenizer.add_special_tokens(self._tokenizer.tokenize(evidence_dec_tokens))
+            )
+        if 1 in evidence_mask:
+            last_ev_idx = len(evidence_mask) - 1 - evidence_mask[::-1].index(1)
+        else:
+            last_ev_idx = 0
+        last_evidence_mask = [1]*len(evidence_mask)
+        last_evidence_mask[last_ev_idx:] = [0]*(len(last_evidence_mask)-last_ev_idx)
+        fields["last_evidence_mask"] = TensorField(torch.tensor(last_evidence_mask))
 
         # make the metadata
         metadata = {
@@ -334,6 +418,8 @@ class QasperReader(DatasetReader):
             "paragraphs": paragraphs,
             "context_tokens": tokenized_context,
         }
+        if evidence_dec_tokens is not None:
+            metadata["ev_gen_answer"] = evidence_dec_tokens
         if additional_metadata is not None:
             metadata.update(additional_metadata)
         fields["metadata"] = MetadataField(metadata)
@@ -349,13 +435,15 @@ class QasperReader(DatasetReader):
     ) -> Tuple[List[Token], List[int]]:
         tokenized_context = []
         paragraph_start_indices = []
-        for paragraph in paragraphs:
-            tokenized_paragraph = self._tokenizer.tokenize(paragraph)
+        for idx, paragraph in enumerate(paragraphs):
             paragraph_start_indices.append(len(tokenized_context))
+            if self._use_unique_paragraph_separators:
+                tokenized_context.append(Token("P"+str(idx)))
+            tokenized_paragraph = self._tokenizer.tokenize(paragraph)
             tokenized_context.extend(tokenized_paragraph)
-            if self._paragraph_separator:
+            if self._paragraph_separator and not self._use_unique_paragraph_separators:
                 tokenized_context.append(Token(self._paragraph_separator))
-        if self._paragraph_separator:
+        if self._paragraph_separator and not self._use_unique_paragraph_separators:
             # We added the separator after every paragraph, so we remove it after the last one.
             tokenized_context = tokenized_context[:-1]
         return tokenized_context, paragraph_start_indices
@@ -363,7 +451,10 @@ class QasperReader(DatasetReader):
     def _extract_answer_and_evidence(
         self, answer: List[JsonDict]
     ) -> Tuple[str, List[str]]:
-        evidence_spans = [x.replace("\n", " ").strip() for x in answer["evidence"]]
+        if self._use_sentence_level_evidence:
+            evidence_spans = [x.replace("\n", " ").strip() for x in answer["highlighted_evidence"]]
+        else:
+            evidence_spans = [x.replace("\n", " ").strip() for x in answer["evidence"]]
         evidence_spans = [x for x in evidence_spans if x != ""]
         if not evidence_spans:
             self._stats["answers with no evidence"] += 1
@@ -414,8 +505,14 @@ class QasperReader(DatasetReader):
                 paragraphs.append(section_info["section_name"])
             for paragraph in section_info["paragraphs"]:
                 paragraph_text = paragraph.replace("\n", " ").strip()
-                if paragraph_text:
-                    paragraphs.append(paragraph_text)
+                if self._use_sentence_level_evidence:
+                    sents = sent_tokenize(paragraph_text)
+                    for sent in sents:
+                        if sent:
+                            paragraphs.append(sent)
+                else:
+                    if paragraph_text:
+                        paragraphs.append(paragraph_text)
             if self._context == "question_and_introduction":
                 # Assuming the first section is the introduction and stopping here.
                 break

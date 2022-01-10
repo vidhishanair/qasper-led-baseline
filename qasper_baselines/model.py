@@ -1,8 +1,10 @@
 import os
-from typing import Any, Dict, List
+import logging
+import numpy as np
+from typing import Any, Dict, List, Tuple
 from overrides import overrides
 
-from transformers import AutoConfig, AutoModelForSeq2SeqLM, AutoTokenizer
+from transformers import AutoConfig, AutoModelForSeq2SeqLM, AutoTokenizer, AutoModel
 from transformers.models.led.modeling_led import shift_tokens_right
 import torch
 
@@ -17,6 +19,10 @@ from allennlp_models.rc.tools import squad
 from qasper_baselines.dataset_reader import AnswerType
 # from sci_long_t5.model import LongT5Config, LongT5TokenizerFast, LongT5ForConditionalGeneration
 
+from sklearn.metrics import precision_recall_curve
+from sklearn.metrics import auc
+
+logger = logging.getLogger(__name__)
 
 @Model.register("qasper_baseline")
 class QasperBaseline(Model):
@@ -28,8 +34,16 @@ class QasperBaseline(Model):
         attention_window_size: int = 1024,
         gradient_checkpointing: bool = False,
         evidence_feedforward: FeedForward = None,
+        use_only_evidence_loss: bool = False,
         use_evidence_scaffold: bool = True,
+        generate_evidence:bool = False,
+        use_margin_loss_for_evidence: bool = False,
+        use_single_margin_loss: bool = False,
         per_reference_level_metrics: bool = False,
+        add_position_embedding_offset:bool = False,
+        randomly_initialize_model:bool = False,
+        reset_top_layer_norm_weights: bool = False,
+        freeze_non_position_weights: bool = False,
         resume_model_dir: str = None,
         resume_model_file: str = None,
         **kwargs
@@ -37,43 +51,76 @@ class QasperBaseline(Model):
         super().__init__(vocab, **kwargs)
         config = AutoConfig.from_pretrained(transformer_model_name)
         config.attention_dropout = attention_dropout
-        config.attention_window = [attention_window_size] * len(config.attention_window)
+        if 'bart' in transformer_model_name:
+            config.attention_window = [attention_window_size] * len(config.attention_window)
         config.gradient_checkpointing = gradient_checkpointing
+        renamed_state_dict = {}
         if resume_model_dir is not None:
             led_model = torch.load(os.path.join(resume_model_dir, resume_model_file))
-            renamed_state_dict = {}
-            for k, v in led_model["state_dict"].items():
-                new_key = k.replace("model.led.", "")
-                renamed_state_dict[new_key] = v
+            if "state_dict" in led_model:
+                for k, v in led_model["state_dict"].items():
+                    new_key = k.replace("model.led.", "")
+                    renamed_state_dict[new_key] = v
+            else:
+                for k, v in led_model.items():
+                    new_key = k.replace("transformer.", "")
+                    new_key = new_key.replace("led.", "")
+                    renamed_state_dict[new_key] = v
+            #print(renamed_state_dict.keys())
             self.transformer = AutoModelForSeq2SeqLM.from_pretrained(None, config=config, state_dict=renamed_state_dict)
+        self.transformer_model_name = transformer_model_name
+        if 'longformer' in transformer_model_name:
+            self.transformer = AutoModel.from_pretrained(transformer_model_name, config=config)
         else:
-            self.transformer = AutoModelForSeq2SeqLM.from_pretrained(transformer_model_name, config=config)
+            if randomly_initialize_model:
+                self.transformer = AutoModelForSeq2SeqLM.from_config(config)
+            else:
+                self.transformer = AutoModelForSeq2SeqLM.from_pretrained(transformer_model_name, config=config)
         self.tokenizer = AutoTokenizer.from_pretrained(
             transformer_model_name,
             add_special_tokens=False
         )
+        if reset_top_layer_norm_weights:
+            self.transformer.led.encoder.layers[-1].final_layer_norm.weight.data.fill_(1.0)
+            self.transformer.led.encoder.layers[-1].final_layer_norm.bias.data.fill_(0.0)
 
-        # config = LongT5Config.from_pretrained(model_args.model_name_or_path)
-        # model = LongT5ForConditionalGeneration.from_pretrained(model_args.model_name_or_path)
-        # tokenizer = LongT5TokenizerFast.from_pretrained(origin_model_name, block_size=config.block_size)
-
-        # config = LongT5Config.from_pretrained("/net/nfs2.s2-research/haokunl/exp_files/model_artifacts/longt5-base-a")
-        # self.transformer = LongT5ForConditionalGeneration.from_pretrained("/net/nfs2.s2-research/haokunl/exp_files/model_artifacts/longt5-base-a")
-        # self.tokenizer = LongT5TokenizerFast.from_pretrained("t5-base", block_size=config.block_size)
+        if freeze_non_position_weights:
+            for param in self.transformer.parameters():
+                param.requires_grad = False
+            self.transformer.led.decoder.embed_positions.weight.requires_grad = True
+            self.transformer.led.encoder.embed_positions.weight.requires_grad = True
 
         if evidence_feedforward:
             self.evidence_feedforward = evidence_feedforward
             assert evidence_feedforward.get_output_dim() == 2
         else:
-            self.evidence_feedforward = torch.nn.Linear(
-                self.transformer.config.hidden_size, 2
-            )
+            if use_margin_loss_for_evidence:
+                self.evidence_feedforward = torch.nn.Linear(
+                    self.transformer.config.hidden_size, 1
+                )
+            else:
+                self.evidence_feedforward = torch.nn.Linear(
+                    self.transformer.config.hidden_size, 2
+                )
+                with torch.no_grad():
+                    if resume_model_dir is not None and 'evidence_feedforward.weight' in renamed_state_dict:
+                        print("Loading evidence feedforward weights")
+                        self.evidence_feedforward.weight.copy_(renamed_state_dict["evidence_feedforward.weight"])
+                        self.evidence_feedforward.bias.copy_(renamed_state_dict["evidence_feedforward.bias"])
+        self._use_only_evidence_loss = use_only_evidence_loss
         self._use_evidence_scaffold = use_evidence_scaffold
+        self._generate_evidence = generate_evidence
+        self._use_margin_loss_for_evidence = use_margin_loss_for_evidence
+        self._use_single_margin_loss = use_single_margin_loss
         self._per_reference_level_metrics = per_reference_level_metrics
         self._answer_f1 = Average()
         self._answer_f1_by_type = {answer_type: Average() for answer_type in AnswerType}
         self._evidence_f1 = Average()
+        self._evidence_p = Average()
+        self._evidence_r = Average()
+        self._evidence_auc = Average()
         self._evidence_loss = Average()
+        self._train_evidence_logit_thresh = Average()
 
     def forward(
         self,
@@ -81,6 +128,7 @@ class QasperBaseline(Model):
         paragraph_indices: torch.Tensor,
         global_attention_mask: torch.Tensor = None,
         evidence: torch.Tensor = None,
+        last_evidence_mask: torch.Tensor = None,
         answer: TextFieldTensors = None,
         metadata: Dict[str, Any] = None,
     ) -> Dict[str, torch.Tensor]:
@@ -92,52 +140,98 @@ class QasperBaseline(Model):
         else:
             answer_ids = None
 
-        output = self.transformer(
-            input_ids=input_ids,
-            attention_mask=attention_mask,
-            global_attention_mask=global_attention_mask,
-            labels=answer_ids,
-            use_cache=False,
-            return_dict=True,
-            output_hidden_states=True,
-        )
-        encoded_tokens = output["encoder_last_hidden_state"]
+        if 'bart' in self.transformer_model_name:
+            attention_mask = (input_ids != self.tokenizer.pad_token_id)
+            output = self.transformer(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                labels=answer_ids,
+                use_cache=False,
+                return_dict=True,
+                output_hidden_states=True,
+            )
+        #else:
+        if 'longformer' in self.transformer_model_name:
+            output = self.transformer(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                global_attention_mask=global_attention_mask,
+                #labels=answer_ids,
+                #use_cache=False,
+                return_dict=True,
+                output_hidden_states=True,
+            )
+        else:
+            output = self.transformer(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                global_attention_mask=global_attention_mask,
+                labels=answer_ids,
+                use_cache=False,
+                return_dict=True,
+                output_hidden_states=True,
+            )
+        if 'longformer' in self.transformer_model_name:
+            encoded_tokens = output["last_hidden_state"]
+        else:
+            encoded_tokens = output["encoder_last_hidden_state"]
 
         output_dict = {}
-        output_dict["answer_logits"] = output["logits"]
+        #output_dict["answer_logits"] = output["logits"]
         loss = None
-        if answer is not None:
+        if not self._use_only_evidence_loss and answer is not None:
             loss = output['loss']
             if not self.training:
                 # Computing evaluation metrics
                 # max_length: 100 covers 97% of the data. 116 for 98%, 169 for 99%, 390 for 99.9%, 
                 # 606 for 100%
-                generated_token_ids = self.transformer.generate(
-                    input_ids=input_ids,
-                    attention_mask=attention_mask,
-                    global_attention_mask=global_attention_mask,
-                    max_length=100
-                )
+                if 'bart' in self.transformer_model_name:
+                    generated_token_ids = self.transformer.generate(
+                        input_ids=input_ids,
+                        attention_mask=attention_mask,
+                        max_length=100,
+                        # use_cache=False,
+                    )
+                else:
+                    generated_token_ids = self.transformer.generate(
+                        input_ids=input_ids,
+                        attention_mask=attention_mask,
+                        global_attention_mask=global_attention_mask,
+                        max_length=100,
+                        # use_cache=False,
+                    )
                 predicted_answers = [
                     self.tokenizer.decode(generated_token_ids[i].tolist(), skip_special_tokens=True)
                     for i in range(generated_token_ids.size(0))
                 ]
                 output_dict["predicted_answers"] = predicted_answers
                 gold_answers = [instance_metadata["all_answers"] for instance_metadata in metadata]
-                for predicted_answer, gold_answer in zip(predicted_answers, gold_answers):
-                    f1s_with_types = []
-                    for gold_answer_info in gold_answer:
-                        f1 = squad.compute_f1(predicted_answer, gold_answer_info['text'])
-                        f1s_with_types.append((f1, gold_answer_info['type']))
+                if self._generate_evidence:
+                    gold_answers = [instance_metadata["ev_gen_answer"] for instance_metadata in metadata]
+                    for predicted_answer, gold_answer in zip(predicted_answers, gold_answers):
+                        print('here')
+                        print(predicted_answer)
+                        print(gold_answer)
+                        #f1s_with_types = []
+                        #for gold_answer_info in gold_answer:
+                        f1 = squad.compute_f1(predicted_answer, gold_answer)
+                        self._answer_f1(f1)
+                else:
+                    for predicted_answer, gold_answer in zip(predicted_answers, gold_answers):
+                        f1s_with_types = []
+                        for gold_answer_info in gold_answer:
+                            f1 = squad.compute_f1(predicted_answer, gold_answer_info['text'])
+                            #f1 = squad.compute_f1(predicted_answer, gold_answer_info)
+                            f1s_with_types.append((f1, gold_answer_info['type']))
 
-                        if self._per_reference_level_metrics:
-                            self._answer_f1(f1)
-                            self._answer_f1_by_type[gold_answer_info['type']](f1)
+                            if self._per_reference_level_metrics:
+                                self._answer_f1(f1)
+                                self._answer_f1_by_type[gold_answer_info['type']](f1)
 
-                    if not self._per_reference_level_metrics:
-                        max_f1, max_f1_answer_type = sorted(f1s_with_types, key=lambda x: x[0])[-1]
-                        self._answer_f1(max_f1)
-                        self._answer_f1_by_type[max_f1_answer_type](max_f1)
+                        if not self._per_reference_level_metrics:
+                            max_f1, max_f1_answer_type = sorted(f1s_with_types, key=lambda x: x[0])[-1]
+                            self._answer_f1(max_f1)
+                            self._answer_f1_by_type[max_f1_answer_type](max_f1)
 
         if self._use_evidence_scaffold and evidence is not None:
             paragraph_indices = paragraph_indices.squeeze(-1)
@@ -154,24 +248,110 @@ class QasperBaseline(Model):
                 device=evidence_logits.device,
                 dtype=evidence_logits.dtype,
             )
-            loss_fn = torch.nn.CrossEntropyLoss(weight=weights)
-            evidence_loss = loss_fn(evidence_logits.view(-1, 2), evidence.view(-1))
-            self._evidence_loss(float(evidence_loss.detach().cpu()))
+            evidence_probs = torch.softmax(evidence_logits, dim=1)
+            if self._use_margin_loss_for_evidence:
+                positive_example_indices = (evidence == 1).nonzero()[:, 1].unsqueeze(0)
+                positive_example_scores = util.batched_index_select(evidence_probs, positive_example_indices).squeeze(0)
+                min_positive_score = torch.min(positive_example_scores).unsqueeze(0)
+
+                negative_example_indices = (evidence == 0).nonzero()[:, 1].unsqueeze(0)
+                negative_example_scores = util.batched_index_select(evidence_probs, negative_example_indices).squeeze(0)
+                max_negative_score = torch.max(negative_example_scores).unsqueeze(0)
+
+                null_score = evidence_probs[:, 0, :].reshape(max_negative_score.size())
+
+                if self.training:
+                    min_positive_index = positive_example_indices[:, torch.argmin(positive_example_scores)]
+                    min_positive_prob = evidence_probs[:, min_positive_index, :]
+                    max_negative_index = negative_example_indices[:, torch.argmax(negative_example_scores)]
+                    max_negative_prob = evidence_probs[:, max_negative_index, :]
+                    if max_negative_prob < min_positive_prob:
+                        self._train_evidence_logit_thresh(max_negative_prob+(min_positive_prob-max_negative_prob)/2)
+                    else:
+                        self._train_evidence_logit_thresh(min_positive_prob+(max_negative_prob-min_positive_prob)/2)
+
+                loss_fn = torch.nn.MarginRankingLoss(margin=1.0)
+                if self._use_single_margin_loss:
+                    all_pos, all_neg = torch.meshgrid(positive_example_scores.squeeze(1), negative_example_scores.squeeze(1))
+                    pos_scores = all_pos.reshape(all_pos.size(0)*all_pos.size(1))
+                    neg_scores = all_neg.reshape(all_neg.size(0)*all_neg.size(1))
+                    evidence_loss = loss_fn(pos_scores, neg_scores,
+                                           torch.ones(pos_scores.size(), device=max_negative_score.device))
+                    # evidence_loss = loss_fn(min_positive_score, max_negative_score,
+                    #                         torch.ones(min_positive_score.size(), device=max_negative_score.device))
+                else:
+                    all_neg, all_neg_null = torch.meshgrid(negative_example_scores.squeeze(1), positive_example_scores.squeeze(1)[0])
+
+                    neg_scores = all_neg.reshape(all_neg.size(0)*all_neg.size(1))
+                    neg_null_scores = all_neg_null.reshape(all_neg_null.size(0)*all_neg_null.size(1))
+                    neg_loss = loss_fn(neg_null_scores, neg_scores,
+                                       torch.ones(neg_scores.size(), device=max_negative_score.device))
+                    evidence_loss = neg_loss
+
+                    if positive_example_scores.size(0) > 1:
+                        all_pos, all_pos_null = torch.meshgrid(positive_example_scores.squeeze(1)[1:], positive_example_scores.squeeze(1)[0])
+                        pos_scores = all_pos.reshape(all_pos.size(0)*all_pos.size(1))
+                        pos_null_scores = all_pos_null.reshape(all_pos_null.size(0)*all_pos_null.size(1))
+                        pos_loss = loss_fn(pos_scores, pos_null_scores,
+                                           torch.ones(pos_scores.size(), device=max_negative_score.device))
+                        evidence_loss += pos_loss
+
+                    # pos_loss = loss_fn(min_positive_score, null_score,
+                    #                         torch.ones(min_positive_score.size(), device=max_negative_score.device))
+                    # neg_loss = loss_fn(null_score, max_negative_score,
+                    #                         torch.ones(min_positive_score.size(), device=max_negative_score.device))
+                    # evidence_loss = pos_loss + neg_loss
+                self._evidence_loss(float(evidence_loss.detach().cpu()))
+            else:
+                # loss_fn = torch.nn.CrossEntropyLoss(weight=weights, reduction='none')
+                loss_fn = torch.nn.CrossEntropyLoss(weight=weights)
+                evidence_loss = loss_fn(evidence_logits.view(-1, 2), evidence.view(-1))
+                # evidence_loss = evidence_loss * last_evidence_mask.view(-1)
+                # evidence_loss = torch.mean(evidence_loss)
+                self._evidence_loss(float(evidence_loss.detach().cpu()))
+
             if loss is None:
                 loss = evidence_loss
             else:
-                loss = loss + evidence_loss
-            if not self.training:
-                predicted_evidence_indices = evidence_logits.argmax(dim=-1).tolist()
+                if self._use_only_evidence_loss:
+                    loss = evidence_loss
+                else:
+                    loss = loss + evidence_loss
+            if True: #not self.training:
+                if self._use_margin_loss_for_evidence:
+                    predicted_evidence_scores = evidence_probs[:, 1:, ].reshape((1, evidence.size(1)-1))
+                    if self._use_single_margin_loss:
+                        threshold = self._train_evidence_logit_thresh.get_metric(reset=False)
+                    else:
+                        threshold = evidence_probs[:, 0, ].reshape((1, 1))
+                    predicted_evidence_indices = (predicted_evidence_scores > threshold).int().tolist()
+                else:
+                    predicted_evidence_indices = evidence_logits.argmax(dim=-1).tolist()
+                # predicted_evidence_indices = [[0]*len(x) for x in predicted_evidence_indices]
                 gold_evidence_indices = [instance_metadata["all_evidence_masks"]
                                          for instance_metadata in metadata]
-                for evidence_f1 in self._compute_evidence_f1(predicted_evidence_indices,
+                if not self.training:
+                    for instance_predicted, instance_gold in zip(evidence_probs[:, :, 1].squeeze(-1).tolist() , gold_evidence_indices):
+                        instance_aucs = []
+                        for gold in instance_gold:
+                            gold = gold[:len(instance_predicted)]
+                            precision, recall, _ = precision_recall_curve(gold, instance_predicted)
+                            recall = np.nan_to_num(recall, nan=1.0)
+                            auc_score = auc(recall, precision)
+                            instance_aucs.append(auc_score)
+                        self._evidence_auc(max(instance_aucs))
+                for evidence_f1, evidence_p, evidence_r in self._compute_evidence_f1(predicted_evidence_indices,
                                                              gold_evidence_indices):
                     if self._per_reference_level_metrics:
                         for ref_evidence_f1 in evidence_f1:
                             self._evidence_f1(ref_evidence_f1)
                     else:
-                        self._evidence_f1(max(evidence_f1))
+                        x = np.array(evidence_f1)
+                        max_f1 = np.max(x)
+                        max_f1_idx = np.argmax(x)
+                        self._evidence_f1(max_f1)
+                        self._evidence_p(evidence_p[max_f1_idx])
+                        self._evidence_r(evidence_r[max_f1_idx])
         output_dict["loss"] = loss
         return output_dict
 
@@ -179,10 +359,13 @@ class QasperBaseline(Model):
     def _compute_evidence_f1(
         predicted_evidence_indices: List[List[int]],
         gold_evidence_indices: List[List[List[int]]]
-    ) -> List[List[float]]:
+    ) -> List[Tuple[List[float], List[float], List[float]]]:
         f1s = []
+        metrics = []
         for instance_predicted, instance_gold in zip(predicted_evidence_indices, gold_evidence_indices):
             instance_f1s = []
+            instance_precisions = []
+            instance_recalls = []
             for gold in instance_gold:
                 # If the document was truncated to fit in the model, the gold will be longer than the 
                 # predicted indices.
@@ -193,16 +376,19 @@ class QasperBaseline(Model):
                 else:
                     precision = true_positives / sum(predicted)
                 recall = true_positives / sum(gold) if sum(gold) != 0 else 1.0
+                instance_precisions.append(precision)
+                instance_recalls.append(recall)
                 if precision + recall == 0:
                     instance_f1s.append(0.0)
                 else:
                     instance_f1s.append(2 * precision * recall / (precision + recall))
             f1s.append(instance_f1s)
+            metrics.append((instance_f1s, instance_precisions, instance_recalls))
             # if self._per_reference_level_metrics:
             #     f1s.extend(instance_f1s)
             # else:
             #     f1s.append(max(instance_f1s))
-        return f1s
+        return metrics
 
     @overrides
     def get_metrics(self, reset: bool = False) -> Dict[str, float]:
@@ -212,7 +398,11 @@ class QasperBaseline(Model):
         boolean_f1_score = self._answer_f1_by_type[AnswerType.BOOLEAN].get_metric(reset)
         none_f1_score = self._answer_f1_by_type[AnswerType.NONE].get_metric(reset)
         evidence_f1 = self._evidence_f1.get_metric(reset)
+        evidence_p = self._evidence_p.get_metric(reset)
+        evidence_r = self._evidence_r.get_metric(reset)
+        evidence_auc = self._evidence_auc.get_metric(reset)
         evidence_loss = self._evidence_loss.get_metric(reset)
+        threshold = self._train_evidence_logit_thresh.get_metric(reset=True)
         return {
             "answer_f1": f1_score,
             "extr_f1": extractive_f1_score,
@@ -220,5 +410,8 @@ class QasperBaseline(Model):
             "bool_f1": boolean_f1_score,
             "none_f1": none_f1_score,
             "evidence_f1": evidence_f1,
+            "evidence_p": evidence_p,
+            "evidence_r": evidence_r,
+            "evidence_auc": evidence_auc,
             "evidence_loss": evidence_loss
         }
